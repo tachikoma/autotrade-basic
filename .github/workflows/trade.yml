@@ -1,0 +1,48 @@
+name: 자동매매 실행
+
+on:
+  # 매일 한국시간 오전 11시 40분 실행 (UTC 02:40)
+  schedule:
+    - cron: '40 2 * * *'
+  
+  # 수동 실행 가능
+  workflow_dispatch:
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+      
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      
+      - name: Python 설정
+        run: uv python install
+      
+      - name: 의존성 설치
+        run: uv sync
+      
+      - name: 자동매매 봇 실행
+        env:
+          # 한국투자증권 API 인증 정보
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
+          
+          # 거래 설정
+          SYMBOL: ${{ secrets.SYMBOL }}
+          EXCHANGE: ${{ secrets.EXCHANGE }}
+          SPLITS: ${{ secrets.SPLITS }}
+          TAKE_PROFIT: ${{ secrets.TAKE_PROFIT }}
+          BIG_BUY_RANGE: ${{ secrets.BIG_BUY_RANGE }}
+          TRADE_MODE: ${{ secrets.TRADE_MODE }}
+          
+          # 텔레그램 알림 설정 (선택사항)
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: uv run python trading_bot.py
