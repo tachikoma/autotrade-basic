@@ -15,16 +15,16 @@ KIS_DOMAIN = "https://openapi.koreainvestment.com:9443"  # 실전 환경
 # KIS_DOMAIN = "https://openapivts.koreainvestment.com:29443"  # 모의 환경
 
 # 종목 정보
-SYMBOL = os.getenv("SYMBOL", "TQQQ")  # 종목 코드 (예: TQQQ, AAPL, TSLA)
-EXCHANGE = os.getenv("EXCHANGE", "NAS")  # 거래소 코드 (NAS: 나스닥, NYS: 뉴욕 등)
+SYMBOL = os.getenv("SYMBOL") or "TQQQ"  # 종목 코드 (예: TQQQ, AAPL, TSLA)
+EXCHANGE = os.getenv("EXCHANGE") or "NAS"  # 거래소 코드 (NAS: 나스닥, NYS: 뉴욕 등)
 
 # 계좌 정보
 ACNT_PRDT_CD = "01"  # 계좌상품코드 (상품코드)
 
 # 전략 파라미터
-SPLITS = int(os.getenv("SPLITS", "40"))  # 분할 수
-TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.10"))  # 익절률 (예: 0.10 = 10%)
-BIG_BUY_RANGE = float(os.getenv("BIG_BUY_RANGE", "0.10"))  # 큰수 상승률 (예: 0.10 = 10%)
+SPLITS = int(os.getenv("SPLITS") or "40")  # 분할 수
+TAKE_PROFIT = float(os.getenv("TAKE_PROFIT") or "0.10")  # 익절률 (예: 0.10 = 10%)
+BIG_BUY_RANGE = float(os.getenv("BIG_BUY_RANGE") or "0.10")  # 큰수 상승률 (예: 0.10 = 10%)
 
 # 거래 모드
-TRADE_MODE = os.getenv("TRADE_MODE", "DRY")  # 거래 모드 (DRY: 주문 정보만 출력, LIVE: 실제 주문)
+TRADE_MODE = os.getenv("TRADE_MODE") or "DRY"  # 거래 모드 (DRY: 주문 정보만 출력, LIVE: 실제 주문)
