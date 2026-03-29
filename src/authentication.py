@@ -1,6 +1,7 @@
 # 한국투자증권 API 인증을 담당하는 파일
 import requests
 import time
+import certifi
 from config import KIS_APP_KEY, KIS_APP_SECRET, KIS_DOMAIN
 
 # 발급받은 토큰을 캐시하는 전역 변수
@@ -74,7 +75,7 @@ def get_access_token():
     
     while retry_count < max_retries:
         try:
-            response = requests.post(url, json=body, headers=headers, verify=False)
+            response = requests.post(url, json=body, headers=headers, verify=certifi.where())
             
             # 응답 데이터 추출
             response_data = response.json()

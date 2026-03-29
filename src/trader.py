@@ -1,7 +1,48 @@
 # 실제 주문을 실행하는 코드
 import requests
+import certifi
+import time
 from authentication import get_access_token
-from config import KIS_APP_KEY, KIS_APP_SECRET, KIS_DOMAIN
+from config import KIS_APP_KEY, KIS_APP_SECRET, KIS_DOMAIN, KIS_MODE
+
+
+def _request_with_rate_retry(method, url, headers=None, params=None, json=None, max_retries=5):
+    """
+    requests.request 래퍼. EGW00201(초당 호출 초과) 발생 시 KIS_MODE에 따라 고정 대기 후 재시도합니다.
+
+    - demo: 초당 2회 -> 대기 0.5s
+    - real: 초당 5회 -> 대기 0.2s
+    """
+    allowed_per_sec = 5 if KIS_MODE == "real" else 2
+    wait_sec = 1.0 / allowed_per_sec
+
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            resp = requests.request(method, url, headers=headers, params=params, json=json, verify=certifi.where())
+            try:
+                resp.raise_for_status()
+                return resp
+            except requests.exceptions.HTTPError as he:
+                # 서버가 JSON으로 에러코드를 제공하는 경우 메시지 확인
+                try:
+                    data = resp.json()
+                    msg_cd = data.get("msg_cd") or data.get("message") or ""
+                    msg1 = data.get("msg1", "")
+                except Exception:
+                    msg_cd = ""
+                    msg1 = ""
+
+                is_rate_limit = ("EGW00201" in str(msg_cd)) or ("초당" in str(msg1)) or ("초당" in resp.text)
+                if is_rate_limit and attempt <= max_retries:
+                    time.sleep(wait_sec)
+                    continue
+                # 재시도 조건이 아니면 원래 예외를 올립니다
+                raise
+        except requests.exceptions.RequestException:
+            # 네트워크 계열 예외는 그대로 재전파
+            raise
 
 
 def get_overseas_stock_price(symbol, exchange_code="NAS"):
@@ -73,12 +114,7 @@ def get_overseas_stock_price(symbol, exchange_code="NAS"):
     
     # Step 5: API 호출
     try:
-        response = requests.get(
-            url, 
-            headers=headers, 
-            params=params, 
-            verify=False  # 자체 서명 인증서 때문에 SSL 검증 비활성화
-        )
+        response = _request_with_rate_retry("GET", url, headers=headers, params=params)
         response.raise_for_status()  # HTTP 에러 발생 시 예외 던지기
         
         # Step 6: 응답 데이터 추출
@@ -162,12 +198,7 @@ def get_overseas_stock_quotation(symbol, exchange_code="NAS"):
     
     # Step 5: API 호출
     try:
-        response = requests.get(
-            url, 
-            headers=headers, 
-            params=params, 
-            verify=False
-        )
+        response = _request_with_rate_retry("GET", url, headers=headers, params=params)
         response.raise_for_status()
         
         # Step 6: 응답 데이터 추출
@@ -246,7 +277,11 @@ def get_overseas_balance(symbol, exchange_code="NAS"):
     """
     
     from config import KIS_ACCOUNT_NO, ACNT_PRDT_CD
-    
+
+    # 필수 설정 검증: KIS_ACCOUNT_NO는 필수입니다
+    if not KIS_ACCOUNT_NO:
+        raise Exception("KIS_ACCOUNT_NO가 설정되어 있지 않습니다. .env 파일에 KIS_ACCOUNT_NO를 추가하세요.")
+
     # Step 1: 접근 토큰 획득
     try:
         token_data = get_access_token()
@@ -264,12 +299,14 @@ def get_overseas_balance(symbol, exchange_code="NAS"):
     url = f"{KIS_DOMAIN}/uapi/overseas-stock/v1/trading/inquire-balance"
     
     # Step 4: 요청 헤더 설정
+    # TR_ID는 실전/모의에 따라 다릅니다
+    balance_tr_id = "TTTS3012R" if KIS_MODE == "real" else "VTTS3012R"
     headers = {
         "content-type": "application/json; charset=utf-8",
         "authorization": f"Bearer {access_token}",
         "appkey": KIS_APP_KEY,
         "appsecret": KIS_APP_SECRET,
-        "tr_id": "TTTS3012R"  # 해외주식 잔고 조회 API의 거래 ID (실전)
+        "tr_id": balance_tr_id
     }
     
     # Step 5: Query Parameter 설정
@@ -284,12 +321,7 @@ def get_overseas_balance(symbol, exchange_code="NAS"):
     
     # Step 6: API 호출
     try:
-        response = requests.get(
-            url, 
-            headers=headers, 
-            params=params, 
-            verify=False
-        )
+        response = _request_with_rate_retry("GET", url, headers=headers, params=params)
         response.raise_for_status()
         
         # Step 7: 응답 데이터 추출
@@ -329,7 +361,17 @@ def get_overseas_balance(symbol, exchange_code="NAS"):
         return None
     
     except requests.exceptions.RequestException as e:
-        raise Exception(f"잔고 조회 실패: {str(e)}")
+        # 가능하면 서버 응답 본문을 함께 표시하여 디버깅에 도움을 줍니다
+        resp_info = ""
+        try:
+            if hasattr(e, 'response') and e.response is not None:
+                resp = e.response
+                resp_info = f" (status={resp.status_code}) response_body={resp.text}"
+        except Exception:
+            # 응답 파싱 중 문제 발생하면 무시하고 원래 예외 메시지 사용
+            resp_info = ""
+
+        raise Exception(f"잔고 조회 실패: {str(e)}{resp_info}")
 
 
 def get_overseas_purchase_amount(symbol, exchange_code="NAS"):
@@ -396,12 +438,13 @@ def get_overseas_purchase_amount(symbol, exchange_code="NAS"):
     url = f"{KIS_DOMAIN}/uapi/overseas-stock/v1/trading/inquire-psamount"
     
     # Step 5: 요청 헤더 설정
+    psamount_tr_id = "TTTS3007R" if KIS_MODE == "real" else "VTTS3007R"
     headers = {
         "content-type": "application/json; charset=utf-8",
         "authorization": f"Bearer {access_token}",
         "appkey": KIS_APP_KEY,
         "appsecret": KIS_APP_SECRET,
-        "tr_id": "TTTS3007R"  # 해외주식 매수가능금액조회 API의 거래 ID (실전)
+        "tr_id": psamount_tr_id
     }
     
     # Step 6: Query Parameter 설정
@@ -415,12 +458,7 @@ def get_overseas_purchase_amount(symbol, exchange_code="NAS"):
     
     # Step 7: API 호출
     try:
-        response = requests.get(
-            url, 
-            headers=headers, 
-            params=params, 
-            verify=False
-        )
+        response = _request_with_rate_retry("GET", url, headers=headers, params=params)
         response.raise_for_status()
         
         # Step 8: 응답 데이터 추출
@@ -497,6 +535,10 @@ def get_overseas_order_history(symbol, exchange_code="NAS", days=30):
     
     from config import KIS_ACCOUNT_NO, ACNT_PRDT_CD
     from datetime import datetime, timedelta
+
+    # 필수 설정 검증: KIS_ACCOUNT_NO는 필수입니다
+    if not KIS_ACCOUNT_NO:
+        raise Exception("KIS_ACCOUNT_NO가 설정되어 있지 않습니다. .env 파일에 KIS_ACCOUNT_NO를 추가하세요.")
     
     # Step 1: 접근 토큰 획득
     try:
@@ -522,12 +564,13 @@ def get_overseas_order_history(symbol, exchange_code="NAS", days=30):
     url = f"{KIS_DOMAIN}/uapi/overseas-stock/v1/trading/inquire-ccnl"
     
     # Step 5: 요청 헤더 설정
+    order_history_tr_id = "TTTS3035R" if KIS_MODE == "real" else "VTTS3035R"
     headers = {
         "content-type": "application/json; charset=utf-8",
         "authorization": f"Bearer {access_token}",
         "appkey": KIS_APP_KEY,
         "appsecret": KIS_APP_SECRET,
-        "tr_id": "TTTS3035R"  # 해외주식 주문체결내역 조회 API의 거래 ID (실전)
+        "tr_id": order_history_tr_id
     }
     
     # Step 6: Query Parameter 설정
@@ -550,12 +593,7 @@ def get_overseas_order_history(symbol, exchange_code="NAS", days=30):
     
     # Step 7: API 호출
     try:
-        response = requests.get(
-            url, 
-            headers=headers, 
-            params=params, 
-            verify=False
-        )
+        response = _request_with_rate_retry("GET", url, headers=headers, params=params)
         response.raise_for_status()
         
         # Step 8: 응답 데이터 추출
@@ -641,6 +679,10 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
     """
     from config import KIS_ACCOUNT_NO, ACNT_PRDT_CD
     
+    # 필수 설정 검증: KIS_ACCOUNT_NO는 필수입니다
+    if not KIS_ACCOUNT_NO:
+        raise Exception("KIS_ACCOUNT_NO가 설정되어 있지 않습니다. .env 파일에 KIS_ACCOUNT_NO를 추가하세요.")
+
     # 주문 구분 코드 매핑
     order_type_map = {
         "LIMIT": "00",  # 지정가
@@ -679,8 +721,8 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
     # Step 2: API 호출 URL 구성
     url = f"{KIS_DOMAIN}/uapi/overseas-stock/v1/trading/order"
     
-    # Step 3: TR_ID 결정 (실전투자 미국 매수)
-    tr_id = "TTTT1002U"
+    # Step 3: TR_ID 결정 (실전/모의에 따라 다름)
+    tr_id = "TTTT1002U" if KIS_MODE == "real" else "VTTT1002U"
     
     # Step 4: 요청 헤더 설정
     headers = {
@@ -705,12 +747,7 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
     
     # Step 6: API 호출
     try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=body,
-            verify=False
-        )
+        response = _request_with_rate_retry("POST", url, headers=headers, json=body)
         response.raise_for_status()
         
         # Step 7: 응답 데이터 추출

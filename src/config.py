@@ -11,8 +11,17 @@ KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", "")
 KIS_ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
 
 # 한국투자증권 API 엔드포인트
-KIS_DOMAIN = "https://openapi.koreainvestment.com:9443"  # 실전 환경
-# KIS_DOMAIN = "https://openapivts.koreainvestment.com:29443"  # 모의 환경
+# 환경변수 `KIS_MODE`로 demo(모의) 또는 real(실전) 환경을 선택합니다.
+# 기본값은 demo(모의)입니다. .env 예: KIS_MODE=real
+#
+# KIS_MODE 값 매핑:
+# - "real": https://openapi.koreainvestment.com:9443
+# - 기타(기본): https://openapivts.koreainvestment.com:29443 (모의)
+KIS_MODE = os.getenv("KIS_MODE", "demo").strip().lower()
+if KIS_MODE == "real":
+	KIS_DOMAIN = "https://openapi.koreainvestment.com:9443"
+else:
+	KIS_DOMAIN = "https://openapivts.koreainvestment.com:29443"
 
 # 종목 정보
 SYMBOL = os.getenv("SYMBOL") or "TQQQ"  # 종목 코드 (예: TQQQ, AAPL, TSLA)

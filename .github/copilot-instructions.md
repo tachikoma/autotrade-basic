@@ -21,12 +21,10 @@ uv 패키지 관리자를 사용하는 프로젝트이므로, 실행할 때는 `
 - 기술적인 구현 설명보다는 "이 작업을 왜 했는지"와 "이제 무엇이 가능해졌는지"를 중심으로 설명한다
 - 이 설명은 주석, 문서, 또는 출력 메시지 형태로 포함될 수 있다
 
-커밋 메시지 예시:
-- "프로젝트 초기 구조 생성"
-- "환경변수(.env)에서 설정값을 읽도록 변경"
-- "실행 여부를 확인하기 위한 기본 출력 코드 추가"
-- "자동매매 시작 지점을 main 함수로 정리"
+# Git and Documentation
+- **Commit Messages**: Write Git commit messages in **Korean** following the Conventional Commits standard (e.g., `feat: 로그인 기능 구현`).
+- **Documentation**: All generated READMEs, API docs, and guides must be in **Korean**.
 
-코드 스타일:
-- 명시적인 변수명 사용
+- **Naming Convention**: Use clear and meaningful **English** for variables, functions, and class names.
+- **Principles**: Adhere to Clean Code principles and ensure logical consistency regardless of the model being used.
 - 한 줄에 여러 동작을 넣지 않는다
