@@ -6,6 +6,20 @@ from authentication import get_access_token
 from config import KIS_APP_KEY, KIS_APP_SECRET, KIS_DOMAIN, KIS_MODE
 
 
+def _mask_account_no(acct):
+    """
+    계좌번호를 안전하게 마스킹합니다.
+    - 길이가 4 이하이면 전체를 '*'로 대체
+    - 그 외에는 앞2자리와 끝2자리를 남기고 중간은 '*'로 대체
+    """
+    s = str(acct) if acct is not None else ""
+    if not s:
+        return ""
+    if len(s) <= 4:
+        return "*" * len(s)
+    return s[:2] + "*" * (len(s) - 4) + s[-2:]
+
+
 def _request_with_rate_retry(method, url, headers=None, params=None, json=None, max_retries=5):
     """
     requests.request 래퍼. EGW00201(초당 호출 초과) 발생 시 KIS_MODE에 따라 고정 대기 후 재시도합니다.
@@ -705,7 +719,7 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
         print(f"주문 유형: {order_type} ({ord_dvsn})")
         print(f"주문 수량: {quantity}주")
         print(f"주문 가격: ${price}")
-        print(f"계좌 번호: {KIS_ACCOUNT_NO}")
+        print(f"계좌 번호: {_mask_account_no(KIS_ACCOUNT_NO)}")
         print("실제 주문은 실행되지 않았습니다.")
         print("=========================================\n")
         return None
