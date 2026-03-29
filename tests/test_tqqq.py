@@ -13,7 +13,7 @@ sys.path.insert(0, str(project_root / "src"))
 from trader import get_overseas_order_history
 
 
-def test_soxl_order_history():
+def test_tqqq_order_history():
     """
     TQQQ 종목의 체결내역 조회 테스트
     """
@@ -23,7 +23,7 @@ def test_soxl_order_history():
     print("=" * 100)
     
     try:
-        # SOXL/AMEX로 조회
+        # TQQQ/NAS로 조회
         order_history = get_overseas_order_history(symbol="TQQQ", exchange_code="NAS", days=30)
         
         if not order_history:
@@ -48,5 +48,5 @@ def test_soxl_order_history():
 
 
 if __name__ == "__main__":
-    success = test_soxl_order_history()
+    success = test_tqqq_order_history()
     sys.exit(0 if success else 1)

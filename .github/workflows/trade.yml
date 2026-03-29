@@ -50,8 +50,8 @@ jobs:
           TAKE_PROFIT: ${{ secrets.TAKE_PROFIT }}
           BIG_BUY_RANGE: ${{ secrets.BIG_BUY_RANGE }}
           
-          # 거래 모드 (수동 실행 시 입력값 우선, 없으면 Secrets 사용)
-          TRADE_MODE: ${{ inputs.trade_mode || secrets.TRADE_MODE || 'DRY' }}
+          # 거래 모드 (리포지토리 Secrets 우선, 없으면 입력값, 그다음 기본 'DRY')
+          TRADE_MODE: ${{ secrets.TRADE_MODE || inputs.trade_mode || 'DRY' }}
           
           # 텔레그램 알림 설정 (선택사항)
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
