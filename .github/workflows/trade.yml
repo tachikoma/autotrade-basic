@@ -10,8 +10,6 @@ on:
     inputs:
       trade_mode:
         description: '거래 모드 선택'
-        required: true
-        default: 'DRY'
         type: choice
         options:
           - DRY
@@ -36,6 +34,9 @@ jobs:
       - name: 의존성 설치
         run: uv sync
       
+      - name: Resolve and log TRADE_MODE
+        run: echo "Resolved TRADE_MODE=${{ inputs.trade_mode || secrets.TRADE_MODE || 'DRY' }}"
+
       - name: 자동매매 봇 실행
         env:
           # 한국투자증권 API 인증 정보

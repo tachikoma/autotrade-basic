@@ -36,4 +36,12 @@ TAKE_PROFIT = float(os.getenv("TAKE_PROFIT") or "0.10")  # 익절률 (예: 0.10 
 BIG_BUY_RANGE = float(os.getenv("BIG_BUY_RANGE") or "0.10")  # 큰수 상승률 (예: 0.10 = 10%)
 
 # 거래 모드
-TRADE_MODE = os.getenv("TRADE_MODE") or "DRY"  # 거래 모드 (DRY: 주문 정보만 출력, LIVE: 실제 주문)
+# 환경변수에서 값을 읽어 대문자로 정규화하고 유효성 검사 수행
+_trade_mode_raw = os.getenv("TRADE_MODE") or ""
+_trade_mode = _trade_mode_raw.strip().upper()
+if _trade_mode not in ("DRY", "LIVE"):
+	if _trade_mode_raw:
+		print(f"경고: 잘못된 TRADE_MODE 값('{_trade_mode_raw}')이 감지되어 'DRY'로 설정합니다.")
+	TRADE_MODE = "DRY"
+else:
+	TRADE_MODE = _trade_mode
