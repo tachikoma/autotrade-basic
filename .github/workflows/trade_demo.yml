@@ -29,8 +29,9 @@ jobs:
       take_profit: ${{ vars.TAKE_PROFIT }}
       big_buy_range: ${{ vars.BIG_BUY_RANGE }}
     secrets:
-      KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
-      KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      KIS_APP_KEY: ${{ secrets.KIS_APP_KEY_DEMO }}
+      KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET_DEMO }}
+      TRADE_MODE: ${{ secrets.TRADE_MODE_DEMO }}
       KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
       KIS_ACCOUNT_NO_DEMO: ${{ secrets.KIS_ACCOUNT_NO_DEMO }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
