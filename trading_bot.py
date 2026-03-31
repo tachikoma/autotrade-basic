@@ -14,7 +14,7 @@ import time
 
 sys.path.append("src")
 
-from config import SYMBOLS, TRADE_MODE, SPLITS, TAKE_PROFIT, BIG_BUY_RANGE
+from config import SYMBOLS, TRADE_MODE
 from strategy import 무상태_무한매수법
 from trader import place_overseas_order, place_overseas_reservation_order, ReservationOrderRequired
 from telegram import send_telegram
@@ -46,14 +46,26 @@ def convert_exchange_code(exchange_code):
     return exchange_map.get(exchange_code, exchange_code)
 
 
-def run_one_symbol(symbol, exchange):
+def run_one_symbol(symbol_config):
     """
     단일 종목에 대해 전략을 실행하고 주문을 넣는 함수입니다.
 
     Parameters:
-        symbol (str): 종목 코드 (예: "TQQQ", "SOXL")
-        exchange (str): 거래소 코드 (예: "NAS", "AMS")
+        symbol_config (dict): 종목별 설정
+            - symbol (str): 종목 코드 (예: "TQQQ")
+            - exchange (str): 거래소 코드 (예: "NAS")
+            - splits (int): 분할 수
+            - take_profit (float): 익절률
+            - big_buy_range (float): 큰수 상승률
+            - seed (float): 투입 시드 금액 (0이면 계좌 전체 사용)
     """
+    symbol = symbol_config["symbol"]
+    exchange = symbol_config["exchange"]
+    splits = symbol_config["splits"]
+    take_profit = symbol_config["take_profit"]
+    big_buy_range = symbol_config["big_buy_range"]
+    seed = symbol_config["seed"]
+
     print(f"\n{'=' * 60}")
     print(f"종목 처리 시작: {symbol} ({exchange})")
     print(f"{'=' * 60}")
@@ -63,9 +75,10 @@ def run_one_symbol(symbol, exchange):
     strategy_result = 무상태_무한매수법(
         symbol=symbol,
         exchange_code=exchange,
-        splits=SPLITS,
-        take_profit_rate=TAKE_PROFIT,
-        big_buy_range=BIG_BUY_RANGE,
+        splits=splits,
+        take_profit_rate=take_profit,
+        big_buy_range=big_buy_range,
+        seed=seed,
     )
 
     print(f"✓ 전략 실행 완료")
@@ -252,18 +265,29 @@ def main():
 
         send_telegram("🚀 자동매매 시작")
 
-        print("\n[설정 정보]")
-        symbol_list = ", ".join(f"{symbol}({exchange})" for symbol, exchange in SYMBOLS)
-        print(f"종목 목록: {symbol_list}")
-        print(f"분할 수: {SPLITS}")
-        print(f"익절률: {TAKE_PROFIT * 100}%")
-        print(f"큰수 상승률: {BIG_BUY_RANGE * 100}%")
+        # ========================================
+        # 설정 정보 출력
+        # ========================================
+        print(f"\n[설정 정보]")
         print(f"거래 모드: {TRADE_MODE}")
+        print(f"종목 목록:")
+        for cfg in SYMBOLS:
+            seed_info = f", 시드: ${cfg['seed']:.0f}" if cfg['seed'] > 0 else ""
+            print(f"  - {cfg['symbol']}({cfg['exchange']}): "
+                  f"분할={cfg['splits']}, "
+                  f"익절={cfg['take_profit']*100:.1f}%, "
+                  f"큰수={cfg['big_buy_range']*100:.1f}%"
+                  f"{seed_info}")
 
-        for symbol, exchange in SYMBOLS:
+        # ========================================
+        # 종목별 순차 처리
+        # ========================================
+        for symbol_config in SYMBOLS:
             try:
-                run_one_symbol(symbol, exchange)
+                run_one_symbol(symbol_config)
             except Exception as error:
+                # 한 종목이 실패해도 나머지 종목은 계속 처리합니다
+                symbol = symbol_config["symbol"]
                 print(f"\n✗ {symbol} 처리 중 오류 발생: {str(error)}")
                 send_telegram(f"⚠️ {symbol} 오류\n\n{str(error)}")
 
