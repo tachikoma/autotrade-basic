@@ -35,8 +35,43 @@ else:
 		print("경고: KIS_MODE=demo 이지만 KIS_ACCOUNT_NO_DEMO(모의계좌)가 설정되어 있지 않습니다.")
 
 # 종목 정보
-SYMBOL = os.getenv("SYMBOL") or "TQQQ"  # 종목 코드 (예: TQQQ, AAPL, TSLA)
-EXCHANGE = os.getenv("EXCHANGE") or "NAS"  # 거래소 코드 (NAS: 나스닥, NYS: 뉴욕 등)
+# 여러 종목을 매매하려면 SYMBOLS 환경변수를 사용하세요.
+# 사용법: SYMBOLS=TQQQ:NAS,SOXL:AMS
+# 기존 단일 종목 방식도 계속 호환됩니다: SYMBOL=TQQQ EXCHANGE=NAS
+def _parse_symbols():
+	"""
+	환경변수에서 종목 목록을 읽어 [(종목코드, 거래소코드), ...] 형태로 반환합니다.
+
+	설정 우선순위:
+	  1. SYMBOLS=TQQQ:NAS,SOXL:AMS  (복수 종목)
+	  2. SYMBOL=TQQQ  EXCHANGE=NAS  (기존 단일 종목 방식, 하위 호환)
+	  3. 기본값: TQQQ(나스닥) + SOXL(아멕스)
+	"""
+	raw = os.getenv("SYMBOLS", "").strip()
+	if raw:
+		pairs = []
+		for item in raw.split(","):
+			item = item.strip()
+			if ":" in item:
+				symbol, exchange = item.split(":", 1)
+				pairs.append((symbol.strip().upper(), exchange.strip().upper()))
+		if pairs:
+			return pairs
+
+	# 기존 단일 종목 방식 (하위 호환)
+	single_symbol = os.getenv("SYMBOL", "").strip().upper()
+	single_exchange = os.getenv("EXCHANGE", "").strip().upper()
+	if single_symbol and single_exchange:
+		return [(single_symbol, single_exchange)]
+
+	# 기본값: TQQQ(나스닥) + SOXL(아멕스)
+	return [("TQQQ", "NAS"), ("SOXL", "AMS")]
+
+SYMBOLS = _parse_symbols()
+
+# 하위 호환성을 위해 첫 번째 종목을 SYMBOL/EXCHANGE로도 제공합니다
+SYMBOL = SYMBOLS[0][0]
+EXCHANGE = SYMBOLS[0][1]
 
 # 계좌 정보
 ACNT_PRDT_CD = "01"  # 계좌상품코드 (상품코드)
