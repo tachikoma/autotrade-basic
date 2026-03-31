@@ -20,7 +20,7 @@ jobs:
   trade_demo:
     uses: ./.github/workflows/trade_base.yml
     with:
-      trade_mode: ${{ github.event.inputs.trade_mode || 'DRY' }}
+      trade_mode: ${{ github.event.inputs.trade_mode || vars.TRADE_MODE_DEMO }}
       kis_mode: demo
       # 데모 전용 기본값(우선순위: 호출자 with -> repo vars -> base defaults)
       symbol: ${{ vars.SYMBOL }}
@@ -31,7 +31,6 @@ jobs:
     secrets:
       KIS_APP_KEY: ${{ secrets.KIS_APP_KEY_DEMO }}
       KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET_DEMO }}
-      TRADE_MODE: ${{ secrets.TRADE_MODE_DEMO }}
       KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
       KIS_ACCOUNT_NO_DEMO: ${{ secrets.KIS_ACCOUNT_NO_DEMO }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
