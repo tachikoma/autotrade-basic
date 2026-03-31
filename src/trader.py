@@ -714,11 +714,11 @@ def get_overseas_order_history(symbol, exchange_code="NAS", days=30):
         raise Exception(f"주문체결내역 조회 실패: {str(e)}")
 
 
-def place_overseas_order(symbol, exchange_code, order_type, quantity, price, trade_mode="DRY"):
+def place_overseas_order(symbol, exchange_code, order_type, quantity, price, side="BUY", trade_mode="DRY"):
     """
     해외주식 주문을 실행합니다.
     
-    이 함수는 한국투자증권 API를 통해 해외주식 매수 주문을 합니다.
+    이 함수는 한국투자증권 API를 통해 해외주식 매수/매도 주문을 합니다.
     - DRY 모드: 주문 정보만 출력하고 실제로는 주문하지 않습니다
     - LIVE 모드: 실제로 주문을 실행하고 주문번호를 반환합니다
     
@@ -738,6 +738,7 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
             - MOC: 장마감시장가 (33)
         quantity (int): 주문 수량
         price (float): 주문 가격 (1주당 가격)
+        side (str): 매수/매도 구분 ("BUY" 또는 "SELL", 기본값: "BUY")
         trade_mode (str): 거래 모드 ("DRY" 또는 "LIVE")
     
     Returns:
@@ -799,6 +800,7 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
         print("\n========== [DRY 모드] 주문 정보 ==========")
         print(f"종목 코드: {symbol}")
         print(f"거래소: {exchange_code}")
+        print(f"매수/매도: {side}")
         print(f"주문 유형: {order_type} ({ord_dvsn})")
         print(f"주문 수량: {quantity}주")
         print(f"주문 가격: ${price}")
@@ -818,8 +820,13 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
     # Step 2: API 호출 URL 구성
     url = f"{KIS_DOMAIN}/uapi/overseas-stock/v1/trading/order"
     
-    # Step 3: TR_ID 결정 (실전/모의에 따라 다름)
-    tr_id = "TTTT1002U" if KIS_MODE == "real" else "VTTT1002U"
+    # Step 3: TR_ID 결정 (실전/모의 및 매수/매도에 따라 다름)
+    # 매수: TTTT1002U (실전) / VTTT1002U (모의)
+    # 매도: TTTT1006U (실전) / VTTT1006U (모의)
+    if side == "SELL":
+        tr_id = "TTTT1006U" if KIS_MODE == "real" else "VTTT1006U"
+    else:
+        tr_id = "TTTT1002U" if KIS_MODE == "real" else "VTTT1002U"
     
     # Step 4: 요청 헤더 설정
     headers = {

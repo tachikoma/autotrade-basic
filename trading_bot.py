@@ -133,20 +133,9 @@ def main():
         executed_orders = []   # 일반 주문 성공 (/trading/order)
         reserved_orders = []   # 예약주문 접수 완료 (/trading/order-resv)
         failed_orders = []     # 실패 (일반 주문 및 예약주문 모두)
-        skipped_orders = []    # 건너뜀 (매도 등 미지원)
         
         for i, order in enumerate(orders, 1):
             print(f"\n주문 {i}/{len(orders)} 실행: {order['comment']}")
-            
-            # 현재 매도 주문은 지원하지 않음 (주문 함수가 매수만 지원)
-            if order['side'] == "SELL":
-                print(f"⊘ 매도 주문은 현재 지원하지 않습니다. 건너뜁니다.")
-                skipped_orders.append({
-                    "comment": order['comment'],
-                    "reason": "매도 주문 미지원"
-                })
-                # TODO: 매도 주문 API 추가 구현 필요
-                continue
             
             try:
                 # 주문 가격 설정 (시장가인 경우 0으로 설정)
@@ -159,6 +148,7 @@ def main():
                     order_type=order['order_type'],
                     quantity=order['quantity'],
                     price=order_price,
+                    side=order['side'],
                     trade_mode=TRADE_MODE
                 )
                 
@@ -186,19 +176,23 @@ def main():
             except ReservationOrderRequired:
                 # 모의투자 + 정규장 외 시간일 때 예약주문 엔드포인트로 분기합니다.
                 # place_overseas_order와 place_overseas_reservation_order는
-                # 서로 다른 API 엔드포인트이므로 호출자에서 명시적으로 구분합니다.
+                # 서로 다른 API 엔드포인트이며, 매수/매도에 따라 ord_dv를 구분합니다.
                 print(f"ℹ️  정규장 외 시간 — 예약주문으로 접수합니다. (/trading/order-resv)")
+
+                # 매수는 usBuy, 매도는 usSell
+                ord_dv = "usSell" if order['side'] == "SELL" else "usBuy"
 
                 if TRADE_MODE == "DRY":
                     print(f"[DRY] 예약주문 정보: {SYMBOL}, {order_exchange_code}, "
-                          f"qty={order['quantity']}, price={order_price}")
+                          f"side={order['side']}, qty={order['quantity']}, price={order_price}")
                 else:
                     try:
                         resv_result = place_overseas_reservation_order(
                             symbol=SYMBOL,
                             exchange_code=order_exchange_code,
                             quantity=order['quantity'],
-                            price=order_price
+                            price=order_price,
+                            ord_dv=ord_dv
                         )
                         reserved_orders.append({
                             "comment": order['comment'],
@@ -251,19 +245,14 @@ def main():
         if TRADE_MODE == "DRY":
             print(f"\n💡 DRY 모드로 실행되었습니다.")
             print(f"   실제 주문은 실행되지 않았으며, 주문 정보만 출력되었습니다.")
-            print(f"   총 {len(orders)}개 주문:")
-            print(f"   - 출력됨: {len(orders) - len(skipped_orders)}개")
-            if skipped_orders:
-                print(f"   - 건너뜀: {len(skipped_orders)}개 (매도 주문)")
+            print(f"   주문 {len(orders)}개가 실행되었습니다.")
             print(f"\n   실제 주문을 하려면 .env 파일에서 TRADE_MODE=LIVE로 설정하세요.")
         else:
             print(f"\n✓ LIVE 모드로 실행되었습니다.")
-            print(f"   총 {len(orders)}개 주문 중:")
+            print(f"   에 {len(orders)}개 주문 중:")
             print(f"   - 체결 성공: {len(executed_orders)}개")
             print(f"   - 예약 접수: {len(reserved_orders)}개")
             print(f"   - 실패:     {len(failed_orders)}개")
-            if skipped_orders:
-                print(f"   - 건너뜀:   {len(skipped_orders)}개")
 
             if executed_orders:
                 print(f"\n[체결 주문]")
@@ -280,11 +269,7 @@ def main():
                 for order in failed_orders:
                     print(f"  ✗ {order['comment']}: {order['error']}")
 
-            if skipped_orders:
-                print(f"\n[건너뛴 주문]")
-                for order in skipped_orders:
-                    print(f"  ⊘ {order['comment']}: {order['reason']}")
-        
+
         print(f"\n프로그램을 정상적으로 종료합니다.")
         
     except Exception as e:
