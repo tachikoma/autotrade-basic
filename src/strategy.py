@@ -51,7 +51,7 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
     이 전략은 주문을 실제로 실행하지 않고, DryRun 모드로 예상되는 주문 목록을 반환합니다.
     
     전략 규칙:
-    1. 포지션이 없을 때: 초기 진입 (2 * unit_qty) @ 현재가 (MOC)
+    1. 포지션이 없을 때: 초기 진입 (2 * unit_qty) @ 현재가 (LIMIT)
     2. 포지션이 있을 때:
        - 익절 주문: 전체 수량 매도 @ 익절가 (LIMIT)
        - 추가 매수 (분할 제한 확인 후):
@@ -84,7 +84,7 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
                     "side": "BUY" or "SELL",
                     "quantity": 주문 수량,
                     "price": 주문 단가 (LIMIT/LOC인 경우),
-                    "order_type": "LIMIT", "LOC", "MOC",
+                    "order_type": "LIMIT", "LOC",
                     "comment": 주문 설명
                 }]
     

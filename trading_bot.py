@@ -15,7 +15,7 @@ sys.path.append("src")
 
 from config import SYMBOL, EXCHANGE, TRADE_MODE, SPLITS, TAKE_PROFIT, BIG_BUY_RANGE
 from strategy import 무상태_무한매수법
-from trader import place_overseas_order
+from trader import place_overseas_order, place_overseas_reservation_order, ReservationOrderRequired
 from telegram import send_telegram
 
 
@@ -130,9 +130,10 @@ def main():
         order_exchange_code = convert_exchange_code(EXCHANGE)
         
         # 각 주문 실행
-        executed_orders = []
-        failed_orders = []
-        skipped_orders = []
+        executed_orders = []   # 일반 주문 성공 (/trading/order)
+        reserved_orders = []   # 예약주문 접수 완료 (/trading/order-resv)
+        failed_orders = []     # 실패 (일반 주문 및 예약주문 모두)
+        skipped_orders = []    # 건너뜀 (매도 등 미지원)
         
         for i, order in enumerate(orders, 1):
             print(f"\n주문 {i}/{len(orders)} 실행: {order['comment']}")
@@ -151,7 +152,7 @@ def main():
                 # 주문 가격 설정 (시장가인 경우 0으로 설정)
                 order_price = order['price'] if order['price'] else 0
                 
-                # 주문 실행
+                # 일반 주문 실행 (/trading/order)
                 result = place_overseas_order(
                     symbol=SYMBOL,
                     exchange_code=order_exchange_code,
@@ -181,7 +182,46 @@ def main():
                 else:
                     # DRY 모드일 때
                     print(f"✓ 주문 정보 출력 완료")
-                
+
+            except ReservationOrderRequired:
+                # 모의투자 + 정규장 외 시간일 때 예약주문 엔드포인트로 분기합니다.
+                # place_overseas_order와 place_overseas_reservation_order는
+                # 서로 다른 API 엔드포인트이므로 호출자에서 명시적으로 구분합니다.
+                print(f"ℹ️  정규장 외 시간 — 예약주문으로 접수합니다. (/trading/order-resv)")
+
+                if TRADE_MODE == "DRY":
+                    print(f"[DRY] 예약주문 정보: {SYMBOL}, {order_exchange_code}, "
+                          f"qty={order['quantity']}, price={order_price}")
+                else:
+                    try:
+                        resv_result = place_overseas_reservation_order(
+                            symbol=SYMBOL,
+                            exchange_code=order_exchange_code,
+                            quantity=order['quantity'],
+                            price=order_price
+                        )
+                        reserved_orders.append({
+                            "comment": order['comment'],
+                            "odno": resv_result['odno'],
+                            "rsvn_ord_rcit_dt": resv_result['rsvn_ord_rcit_dt'],
+                        })
+                        print(f"✓ 예약주문 접수 완료 (주문번호: {resv_result['odno']})")
+
+                        message = f"""📋 예약주문 접수
+
+{order['comment']}
+수량: {order['quantity']}주
+예약주문번호: {resv_result['odno']}
+접수일자: {resv_result['rsvn_ord_rcit_dt']}"""
+                        send_telegram(message)
+                    except Exception as resv_e:
+                        print(f"✗ 예약주문 실패: {str(resv_e)}")
+                        failed_orders.append({
+                            "comment": order['comment'],
+                            "error": f"예약주문 실패: {str(resv_e)}",
+                        })
+                        send_telegram(f"⚠️ 예약주문 실패\n\n{order['comment']}\n에러: {str(resv_e)}")
+
             except Exception as e:
                 # 주문 실패 시 에러 출력 및 기록
                 error_msg = f"주문 실패: {str(e)}"
@@ -219,26 +259,29 @@ def main():
         else:
             print(f"\n✓ LIVE 모드로 실행되었습니다.")
             print(f"   총 {len(orders)}개 주문 중:")
-            print(f"   - 성공: {len(executed_orders)}개")
-            print(f"   - 실패: {len(failed_orders)}개")
+            print(f"   - 체결 성공: {len(executed_orders)}개")
+            print(f"   - 예약 접수: {len(reserved_orders)}개")
+            print(f"   - 실패:     {len(failed_orders)}개")
             if skipped_orders:
-                print(f"   - 건너뜀: {len(skipped_orders)}개")
-            
+                print(f"   - 건너뜀:   {len(skipped_orders)}개")
+
             if executed_orders:
-                print(f"\n[실행된 주문 목록]")
+                print(f"\n[체결 주문]")
                 for order in executed_orders:
                     print(f"  ✓ {order['comment']}: 주문번호 {order['odno']} (시각: {order['ord_tmd']})")
-            
+
+            if reserved_orders:
+                print(f"\n[예약 주문] — 다음 정규장 시작 시 체결됩니다")
+                for order in reserved_orders:
+                    print(f"  📋 {order['comment']}: 예약번호 {order['odno']} (접수일자: {order['rsvn_ord_rcit_dt']})")
+
             if failed_orders:
-                print(f"\n[실패한 주문 목록]")
+                print(f"\n[실패한 주문]")
                 for order in failed_orders:
                     print(f"  ✗ {order['comment']}: {order['error']}")
-                
-                # TODO: 텔레그램으로 실패 요약 전송
-                # send_telegram_message(f"⚠️ 주문 실패 {len(failed_orders)}건 발생")
-            
+
             if skipped_orders:
-                print(f"\n[건너뛴 주문 목록]")
+                print(f"\n[건너뛴 주문]")
                 for order in skipped_orders:
                     print(f"  ⊘ {order['comment']}: {order['reason']}")
         

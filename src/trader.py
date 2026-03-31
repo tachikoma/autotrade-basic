@@ -2,8 +2,25 @@
 import requests
 import certifi
 import time
+from datetime import datetime, time as dtime, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    # Python <3.9 fallback (shouldn't be needed on modern runners)
+    from backports.zoneinfo import ZoneInfo
 from authentication import get_access_token
 from config import KIS_APP_KEY, KIS_APP_SECRET, KIS_DOMAIN, KIS_MODE
+
+
+class ReservationOrderRequired(Exception):
+    """
+    모의투자에서 정규장 외 시간에 일반 주문을 시도하면 발생하는 예외입니다.
+
+    - place_overseas_order()가 이 예외를 raise하면
+      호출자는 place_overseas_reservation_order()를 대신 호출해야 합니다.
+    - 두 함수는 서로 다른 엔드포인트를 사용하므로 각자 독립적으로 관리합니다.
+    """
+    pass
 
 
 def _mask_account_no(acct):
@@ -256,6 +273,51 @@ def _convert_exchange_code(exchange_code):
         return exchange_map[exchange_code]
     else:
         raise Exception(f"지원하지 않는 거래소 코드입니다: {exchange_code}")
+
+
+def _get_kst_now():
+    """한국시간(KST) 현재 시각을 반환합니다."""
+    return datetime.now(ZoneInfo("Asia/Seoul"))
+
+
+def _is_us_dst() -> bool:
+    """현재 시각 기준으로 미국 동부시간(ET)의 서머타임 적용 여부를 반환합니다."""
+    ny_now = datetime.now(ZoneInfo("America/New_York"))
+    return bool(ny_now.dst() and ny_now.dst() != timedelta(0))
+
+
+def _is_kst_regular_market(now_kst: datetime) -> bool:
+    """KST 기준 정규장 여부 검사.
+
+    정규장 시간 (KST):
+      - 서머타임(미국 DST 적용): 23:30 ~ 익일 06:00
+      - 비서머타임: 22:30 ~ 익일 05:00
+    """
+    is_dst = _is_us_dst()
+    t = now_kst.time()
+    if is_dst:
+        start = dtime(23, 30)
+        end = dtime(6, 0)
+    else:
+        start = dtime(22, 30)
+        end = dtime(5, 0)
+
+    # wrap-around 범위 처리
+    return (t >= start) or (t <= end)
+
+
+def _is_kst_reserve_window(now_kst: datetime) -> bool:
+    """KST 기준 예약주문 가능시간 검사.
+
+    예약주문 가능시간 (KST):
+      - 서머타임(미국 DST 적용): 10:00 ~ 22:20
+      - 비서타임: 10:00 ~ 23:20
+    """
+    is_dst = _is_us_dst()
+    t = now_kst.time()
+    start = dtime(10, 0)
+    end = dtime(22, 20) if is_dst else dtime(23, 20)
+    return (t >= start) and (t <= end)
 
 
 def get_overseas_balance(symbol, exchange_code="NAS"):
@@ -711,6 +773,27 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
     
     ord_dvsn = order_type_map[order_type]
     
+    # 모의투자(데모)일 때: 정규장이 아닐 경우 예약주문으로 자동 전환
+    try:
+        kis_mode_val = KIS_MODE
+    except NameError:
+        kis_mode_val = "demo"
+
+    if kis_mode_val != "real":
+        # 현재 KST 시각을 확인
+        now_kst = _get_kst_now()
+        if not _is_kst_regular_market(now_kst):
+            # 예약주문 가능시간이 아닌 경우에는 일반 예외로 중단
+            if not _is_kst_reserve_window(now_kst):
+                raise Exception("SIM_MODE: 예약주문 가능시간이 아닙니다 (KST 기준)")
+            # 정규장 외이지만 예약주문 가능시간 → 호출자에게 예약주문 필요 신호를 보냅니다.
+            # place_overseas_order는 일반 주문 엔드포인트만 담당하므로
+            # 예약주문 엔드포인트 호출은 호출자가 직접 처리합니다.
+            raise ReservationOrderRequired(
+                f"모의투자: 정규장 외 시간입니다. 예약주문을 사용하세요. "
+                f"(symbol={symbol}, exchange={exchange_code}, qty={quantity}, price={price})"
+            )
+
     # DRY 모드일 때는 주문 정보만 출력
     if trade_mode == "DRY":
         print("\n========== [DRY 모드] 주문 정보 ==========")
@@ -792,3 +875,100 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, tra
     
     except requests.exceptions.RequestException as e:
         raise Exception(f"주문 실행 실패: {str(e)}")
+
+
+def place_overseas_reservation_order(symbol: str, exchange_code: str, quantity: int, price: float, ord_dv: str = "usBuy"):
+    """
+    해외주식 예약주문 접수 API를 호출합니다.
+
+    이 함수는 한국투자증권의 `/uapi/overseas-stock/v1/trading/order-resv` 엔드포인트를
+    사용하여 미국장(정규장) 외 시간에 예약주문을 접수합니다. `ord_dv`는
+    'usBuy'|'usSell'|'asia' 중 하나를 사용합니다.
+
+    Returns: API 출력의 object 형태를 dict로 반환합니다.
+    """
+    from config import KIS_ACCOUNT_NO, ACNT_PRDT_CD
+
+    if not KIS_ACCOUNT_NO:
+        raise Exception("KIS_ACCOUNT_NO가 설정되어 있지 않습니다. .env 파일에 KIS_ACCOUNT_NO를 추가하세요.")
+
+    # TR_ID 결정: 실전/모의 및 매수/매도/아시아 구분
+    if KIS_MODE == "real":
+        if ord_dv == "usBuy":
+            tr_id = "TTTT3014U"
+        elif ord_dv == "usSell":
+            tr_id = "TTTT3016U"
+        elif ord_dv == "asia":
+            tr_id = "TTTS3013U"
+        else:
+            raise Exception("ord_dv can only be 'usBuy', 'usSell' or 'asia'")
+    else:
+        if ord_dv == "usBuy":
+            tr_id = "VTTT3014U"
+        elif ord_dv == "usSell":
+            tr_id = "VTTT3016U"
+        elif ord_dv == "asia":
+            tr_id = "VTTS3013U"
+        else:
+            raise Exception("ord_dv can only be 'usBuy', 'usSell' or 'asia'")
+
+    url = f"{KIS_DOMAIN}/uapi/overseas-stock/v1/trading/order-resv"
+
+    # access token
+    try:
+        token_data = get_access_token()
+        access_token = token_data["access_token"]
+    except Exception as e:
+        raise Exception(f"토큰 획득 실패: {str(e)}")
+
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {access_token}",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET,
+        "tr_id": tr_id
+    }
+
+    # API body (대문자 키 사용)
+    body = {
+        "CANO": KIS_ACCOUNT_NO,
+        "ACNT_PRDT_CD": ACNT_PRDT_CD,
+        "PDNO": symbol,
+        "OVRS_EXCG_CD": exchange_code,
+        "FT_ORD_QTY": str(quantity),
+        "FT_ORD_UNPR3": str(price)
+    }
+
+    try:
+        response = _request_with_rate_retry("POST", url, headers=headers, json=body)
+        response.raise_for_status()
+        response_data = response.json()
+
+        if response_data.get("rt_cd") != "0":
+            msg_cd = response_data.get("msg_cd", "")
+            msg1 = response_data.get("msg1", "알 수 없는 에러")
+            raise Exception(f"예약주문 실패 (응답코드: {msg_cd}): {msg1}")
+
+        output = response_data.get("output", {})
+        print("\n========== [예약주문] 접수 성공 ==========")
+        print(f"종목: {symbol}  수량: {quantity}  가격: {price}")
+        print(f"예약주문번호(ODNO): {output.get('ODNO','')}")
+        print("========================================\n")
+
+        # 예약주문 API 원래 응답 필드를 그대로 반환합니다.
+        # - odno           : 예약주문번호
+        # - rsvn_ord_rcit_dt : 예약주문 접수일자 (YYYYMMDD)
+        # - ovrs_rsvn_odno : 해외예약주문번호
+
+        # 일반 주문(place_overseas_order)의 반환 형식과는 의도적으로 다릅니다.
+        # RSVN_ORD_RCIT_DT 가 비어있으면 KST 오늘 날짜(YYYYMMDD)로 대체합니다.
+        rsvn_dt = output.get("RSVN_ORD_RCIT_DT") or _get_kst_now().strftime("%Y%m%d")
+
+        return {
+            "odno": output.get("ODNO", ""),
+            "rsvn_ord_rcit_dt": rsvn_dt,
+            "ovrs_rsvn_odno": output.get("OVRS_RSVN_ODNO", ""),  # 해외예약주문번호
+        }
+
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"예약주문 호출 실패: {str(e)}")
