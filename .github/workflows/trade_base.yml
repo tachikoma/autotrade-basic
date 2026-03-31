@@ -1,0 +1,93 @@
+name: Reusable 자동매매 베이스
+
+on:
+  workflow_call:
+    inputs:
+      trade_mode:
+        description: '거래 모드 (DRY or LIVE)'
+        required: false
+        type: string
+      kis_mode:
+        description: 'KIS 모드 (demo or real)'
+        required: false
+        type: string
+      symbol:
+        description: '종목 코드'
+        required: false
+        type: string
+      exchange:
+        description: '거래소 코드'
+        required: false
+        type: string
+      splits:
+        description: '분할 수'
+        required: false
+        type: string
+      take_profit:
+        description: '익절률'
+        required: false
+        type: string
+      big_buy_range:
+        description: '큰수 상승률'
+        required: false
+        type: string
+    secrets:
+      KIS_APP_KEY:
+        required: true
+      KIS_APP_SECRET:
+        required: true
+      KIS_ACCOUNT_NO:
+        required: false
+      KIS_ACCOUNT_NO_DEMO:
+        required: false
+      TELEGRAM_BOT_TOKEN:
+        required: false
+      TELEGRAM_CHAT_ID:
+        required: false
+
+jobs:
+  run-trade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Python 설정
+        run: uv python install
+
+      - name: 의존성 설치
+        run: uv sync
+
+      - name: Resolve and log inputs
+        run: |
+          echo "Resolved TRADE_MODE=${{ inputs.trade_mode || 'DRY' }}"
+          echo "Resolved KIS_MODE=${{ inputs.kis_mode || 'demo' }}"
+          echo "Resolved SYMBOL=${{ inputs.symbol || 'TQQQ' }}"
+
+      - name: 자동매매 봇 실행
+        env:
+          # KIS 인증정보 (reusable workflow는 호출자에서 secrets을 주입받습니다)
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          # 계좌 정보는 호출자에서 두 종류를 모두 전달할 수 있습니다.
+          KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_NO_DEMO: ${{ secrets.KIS_ACCOUNT_NO_DEMO }}
+
+          # 런타임 설정: inputs -> repo vars -> 하드코딩 기본값 순으로 폴백
+          KIS_MODE: ${{ inputs.kis_mode || vars.KIS_MODE || 'demo' }}
+          TRADE_MODE: ${{ inputs.trade_mode || vars.TRADE_MODE || 'DRY' }}
+          SYMBOL: ${{ inputs.symbol || vars.SYMBOL || 'TQQQ' }}
+          EXCHANGE: ${{ inputs.exchange || vars.EXCHANGE || 'NAS' }}
+          SPLITS: ${{ inputs.splits || vars.SPLITS || '40' }}
+          TAKE_PROFIT: ${{ inputs.take_profit || vars.TAKE_PROFIT || '0.10' }}
+          BIG_BUY_RANGE: ${{ inputs.big_buy_range || vars.BIG_BUY_RANGE || '0.10' }}
+
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+        run: uv run python trading_bot.py

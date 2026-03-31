@@ -1,0 +1,37 @@
+name: 자동매매 실행 (Demo)
+
+on:
+  schedule:
+    # 데모(예약주문 검증용) - ET 10:10 트리거 (DST 분리)
+    - cron: '10 14 * 4-10 1-5'
+    - cron: '10 15 * 11-12 1-5'
+    - cron: '10 15 * 1-3 1-5'
+  workflow_dispatch:
+    inputs:
+      trade_mode:
+        description: '거래 모드 선택'
+        required: false
+        type: choice
+        options:
+          - DRY
+          - LIVE
+
+jobs:
+  trade_demo:
+    uses: ./.github/workflows/trade_base.yml
+    with:
+      trade_mode: ${{ github.event.inputs.trade_mode || 'DRY' }}
+      kis_mode: demo
+      # 데모 전용 기본값(우선순위: 호출자 with -> repo vars -> base defaults)
+      symbol: ${{ vars.SYMBOL }}
+      exchange: ${{ vars.EXCHANGE }}
+      splits: ${{ vars.SPLITS }}
+      take_profit: ${{ vars.TAKE_PROFIT }}
+      big_buy_range: ${{ vars.BIG_BUY_RANGE }}
+    secrets:
+      KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+      KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
+      KIS_ACCOUNT_NO_DEMO: ${{ secrets.KIS_ACCOUNT_NO_DEMO }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

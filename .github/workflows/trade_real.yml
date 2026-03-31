@@ -1,0 +1,31 @@
+name: 자동매매 실행 (Real)
+
+on:
+  schedule:
+    # 프리마켓 진입(ET 04:00) 트리거 - DST 분리
+    - cron: '0 8 * 4-10 1-5'
+    - cron: '0 9 * 11-12 1-5'
+    - cron: '0 9 * 1-3 1-5'
+  workflow_dispatch:
+    inputs:
+      trade_mode:
+        description: '거래 모드 선택'
+        required: false
+        type: choice
+        options:
+          - DRY
+          - LIVE
+
+jobs:
+  trade:
+    uses: ./.github/workflows/trade_base.yml
+    with:
+      trade_mode: ${{ github.event.inputs.trade_mode || 'LIVE' }}
+      kis_mode: real
+    secrets:
+      KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+      KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
+      KIS_ACCOUNT_NO_DEMO: ${{ secrets.KIS_ACCOUNT_NO_DEMO }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
