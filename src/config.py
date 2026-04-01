@@ -34,6 +34,11 @@ else:
 	if not KIS_ACCOUNT_NO:
 		print("경고: KIS_MODE=demo 이지만 KIS_ACCOUNT_NO_DEMO(모의계좌)가 설정되어 있지 않습니다.")
 
+# 전략 파라미터 (종목별 기본값으로 사용되므로 _parse_symbols() 호출 전에 정의)
+SPLITS = int(os.getenv("SPLITS") or "40")  # 분할 수
+TAKE_PROFIT = float(os.getenv("TAKE_PROFIT") or "0.10")  # 익절률 (예: 0.10 = 10%)
+BIG_BUY_RANGE = float(os.getenv("BIG_BUY_RANGE") or "0.10")  # 큰수 상승률 (예: 0.10 = 10%)
+
 # 종목 정보
 # 여러 종목을 매매하려면 SYMBOLS 환경변수를 사용하세요.
 # 사용법: SYMBOLS=TQQQ:NAS,SOXL:AMS
@@ -107,11 +112,6 @@ EXCHANGE = SYMBOLS[0]["exchange"]
 
 # 계좌 정보
 ACNT_PRDT_CD = "01"  # 계좌상품코드 (상품코드)
-
-# 전략 파라미터
-SPLITS = int(os.getenv("SPLITS") or "40")  # 분할 수
-TAKE_PROFIT = float(os.getenv("TAKE_PROFIT") or "0.10")  # 익절률 (예: 0.10 = 10%)
-BIG_BUY_RANGE = float(os.getenv("BIG_BUY_RANGE") or "0.10")  # 큰수 상승률 (예: 0.10 = 10%)
 
 # 거래 모드
 # 환경변수에서 값을 읽어 대문자로 정규화하고 유효성 검사 수행
