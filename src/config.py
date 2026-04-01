@@ -35,8 +35,75 @@ else:
 		print("경고: KIS_MODE=demo 이지만 KIS_ACCOUNT_NO_DEMO(모의계좌)가 설정되어 있지 않습니다.")
 
 # 종목 정보
-SYMBOL = os.getenv("SYMBOL") or "TQQQ"  # 종목 코드 (예: TQQQ, AAPL, TSLA)
-EXCHANGE = os.getenv("EXCHANGE") or "NAS"  # 거래소 코드 (NAS: 나스닥, NYS: 뉴욕 등)
+# 여러 종목을 매매하려면 SYMBOLS 환경변수를 사용하세요.
+# 사용법: SYMBOLS=TQQQ:NAS,SOXL:AMS
+# 기존 단일 종목 방식도 계속 호환됩니다: SYMBOL=TQQQ EXCHANGE=NAS
+#
+# 종목별 세부 설정 (환경변수 이름 규칙: {종목코드}_{설정명})
+# 예시:
+#   TQQQ_SPLITS=40        → TQQQ 분할 수 (미설정 시 전역 SPLITS 사용)
+#   TQQQ_TAKE_PROFIT=0.10 → TQQQ 익절률
+#   TQQQ_BIG_BUY_RANGE=0.10 → TQQQ 큰수 상승률
+#   TQQQ_SEED=10000       → TQQQ에 투입할 시드 (달러, 0이면 계좌 전체 사용)
+#   SOXL_SPLITS=20
+#   SOXL_SEED=5000
+def _parse_symbols():
+	"""
+	환경변수에서 종목 목록을 읽어 종목별 설정 dict 리스트로 반환합니다.
+
+	반환 형태:
+	  [
+	    {
+	      "symbol": "TQQQ", "exchange": "NAS",
+	      "splits": 40, "take_profit": 0.10, "big_buy_range": 0.10,
+	      "seed": 10000  # 0이면 계좌 전체 사용
+	    },
+	    ...
+	  ]
+
+	설정 우선순위:
+	  1. SYMBOLS=TQQQ:NAS,SOXL:AMS  (복수 종목)
+	  2. SYMBOL=TQQQ  EXCHANGE=NAS  (기존 단일 종목 방식, 하위 호환)
+	  3. 기본값: TQQQ(나스닥) + SOXL(아멕스)
+	"""
+	raw = os.getenv("SYMBOLS", "").strip()
+	pairs = []
+	if raw:
+		for item in raw.split(","):
+			item = item.strip()
+			if ":" in item:
+				sym, exch = item.split(":", 1)
+				pairs.append((sym.strip().upper(), exch.strip().upper()))
+
+	if not pairs:
+		# 기존 단일 종목 방식 (하위 호환)
+		single_symbol = os.getenv("SYMBOL", "").strip().upper()
+		single_exchange = os.getenv("EXCHANGE", "").strip().upper()
+		if single_symbol and single_exchange:
+			pairs = [(single_symbol, single_exchange)]
+		else:
+			# 기본값: TQQQ(나스닥) + SOXL(아멕스)
+			pairs = [("TQQQ", "NAS"), ("SOXL", "AMS")]
+
+	result = []
+	for sym, exch in pairs:
+		result.append({
+			"symbol": sym,
+			"exchange": exch,
+			# 종목별 설정이 없으면 전역 기본값을 사용합니다
+			"splits": int(os.getenv(f"{sym}_SPLITS") or SPLITS),
+			"take_profit": float(os.getenv(f"{sym}_TAKE_PROFIT") or TAKE_PROFIT),
+			"big_buy_range": float(os.getenv(f"{sym}_BIG_BUY_RANGE") or BIG_BUY_RANGE),
+			# 시드: 이 종목에 투입할 최대 금액 (달러). 0이면 계좌 전체 주문가능금액 사용
+			"seed": float(os.getenv(f"{sym}_SEED") or "0"),
+		})
+	return result
+
+SYMBOLS = _parse_symbols()
+
+# 하위 호환성을 위해 첫 번째 종목을 SYMBOL/EXCHANGE로도 제공합니다
+SYMBOL = SYMBOLS[0]["symbol"]
+EXCHANGE = SYMBOLS[0]["exchange"]
 
 # 계좌 정보
 ACNT_PRDT_CD = "01"  # 계좌상품코드 (상품코드)

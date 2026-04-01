@@ -44,7 +44,7 @@ def adjust_price_to_tick(price):
         return math.floor(price * 100) / 100
 
 
-def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, big_buy_range):
+def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, big_buy_range, seed=0):
     """
     무상태 무한매수법 전략을 실행합니다.
     
@@ -64,6 +64,7 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
         splits (int): 분할 수 (기본 40)
         take_profit_rate (float): 익절 상승률 (예: 0.10 = 10%)
         big_buy_range (float): 큰수 상승률 (예: 0.10 = 10%)
+        seed (float): 이 종목에 투입할 최대 금액 (달러). 0이면 계좌 전체 주문가능금액 사용
     
     Returns:
         dict: DryRun 결과
@@ -124,6 +125,12 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
     
     psamount = get_overseas_purchase_amount(symbol, exchange_code)
     orderable_cash = float(psamount.get("ord_psbl_frcr_amt", "0"))
+
+    # 시드가 설정된 경우, 실제 주문가능금액과 시드 중 작은 값을 사용합니다.
+    # 예: 계좌에 $50,000 있어도 TQQQ_SEED=10000 이면 $10,000 범위 내에서만 매매합니다.
+    if seed > 0:
+        orderable_cash = min(orderable_cash, seed)
+        print(f"  시드 적용: ${seed:.2f} (계좌 주문가능금액과 비교 후 ${orderable_cash:.2f} 사용)")
     
     # ========================================
     # 4. unit_qty 결정
