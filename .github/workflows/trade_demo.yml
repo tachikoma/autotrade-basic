@@ -15,6 +15,10 @@ on:
         options:
           - DRY
           - LIVE
+      symbols:
+        description: '거래 심볼 (예: TQQQ:NAS,SOXL:AMS)'
+        required: false
+        type: string
 
 jobs:
   trade_demo:
@@ -22,7 +26,8 @@ jobs:
     with:
       trade_mode: ${{ github.event.inputs.trade_mode || vars.TRADE_MODE_DEMO }}
       kis_mode: demo
-      # 데모 전용 기본값(우선순위: 호출자 with -> repo vars -> base defaults)
+      # 데모 전용 기본값(우선순위: 호출자 inputs -> repo vars -> base defaults)
+      symbols: ${{ github.event.inputs.symbols || vars.SYMBOLS }}
       symbol: ${{ vars.SYMBOL }}
       exchange: ${{ vars.EXCHANGE }}
       splits: ${{ vars.SPLITS }}

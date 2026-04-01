@@ -11,6 +11,10 @@ on:
         description: 'KIS 모드 (demo or real)'
         required: false
         type: string
+      symbols:
+        description: '투자 심볼 (예: TQQQ:NAS,SOXL:AMS)'
+        required: false
+        type: string
       symbol:
         description: '종목 코드'
         required: false
@@ -67,7 +71,7 @@ jobs:
         run: |
           echo "Resolved TRADE_MODE=${{ inputs.trade_mode || 'DRY' }}"
           echo "Resolved KIS_MODE=${{ inputs.kis_mode || 'demo' }}"
-          echo "Resolved SYMBOL=${{ inputs.symbol || 'TQQQ' }}"
+          echo "Resolved SYMBOLS=${{ inputs.symbols || 'TQQQ:NAS,SOXL:AMS' }}"
 
       - name: 자동매매 봇 실행
         env:
@@ -86,6 +90,8 @@ jobs:
           SPLITS: ${{ inputs.splits || vars.SPLITS || '40' }}
           TAKE_PROFIT: ${{ inputs.take_profit || vars.TAKE_PROFIT || '0.10' }}
           BIG_BUY_RANGE: ${{ inputs.big_buy_range || vars.BIG_BUY_RANGE || '0.10' }}
+          # 복수 종목 사용 (inputs.symbols 추가)
+          SYMBOLS: ${{ inputs.symbols || 'TQQQ:NAS,SOXL:AMS' }}
 
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

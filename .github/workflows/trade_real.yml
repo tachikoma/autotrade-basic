@@ -15,6 +15,10 @@ on:
         options:
           - DRY
           - LIVE
+      symbols:
+        description: '거래 심볼 (예: TQQQ:NAS,SOXL:AMS)'
+        required: false
+        type: string
 
 jobs:
   trade:
@@ -22,6 +26,8 @@ jobs:
     with:
       trade_mode: ${{ github.event.inputs.trade_mode || 'LIVE' }}
       kis_mode: real
+      # 복수 종목 사용 (우선순위: input.symbols -> vars.SYMBOLS -> base 기본값)
+      symbols: ${{ github.event.inputs.symbols || vars.SYMBOLS }}
     secrets:
       KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
       KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
