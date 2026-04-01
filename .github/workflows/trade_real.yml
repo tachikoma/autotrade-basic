@@ -24,7 +24,7 @@ jobs:
   trade:
     uses: ./.github/workflows/trade_base.yml
     with:
-      trade_mode: ${{ github.event.inputs.trade_mode || 'LIVE' }}
+      trade_mode: ${{ github.event.inputs.trade_mode || vars.TRADE_MODE }}
       kis_mode: real
       # 복수 종목 사용 (우선순위: input.symbols -> vars.SYMBOLS -> base 기본값)
       symbols: ${{ github.event.inputs.symbols || vars.SYMBOLS }}

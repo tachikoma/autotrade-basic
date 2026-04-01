@@ -93,6 +93,16 @@ jobs:
           # 복수 종목 사용 (inputs.symbols 추가)
           SYMBOLS: ${{ inputs.symbols || 'TQQQ:NAS,SOXL:AMS' }}
 
+          # 종목별 세부 설정 (미설정 시 전역 값 또는 코드 기본값 사용)
+          TQQQ_SPLITS: ${{ vars.TQQQ_SPLITS }}
+          TQQQ_TAKE_PROFIT: ${{ vars.TQQQ_TAKE_PROFIT }}
+          TQQQ_BIG_BUY_RANGE: ${{ vars.TQQQ_BIG_BUY_RANGE }}
+          TQQQ_SEED: ${{ vars.TQQQ_SEED }}
+          SOXL_SPLITS: ${{ vars.SOXL_SPLITS }}
+          SOXL_TAKE_PROFIT: ${{ vars.SOXL_TAKE_PROFIT }}
+          SOXL_BIG_BUY_RANGE: ${{ vars.SOXL_BIG_BUY_RANGE }}
+          SOXL_SEED: ${{ vars.SOXL_SEED }}
+
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
