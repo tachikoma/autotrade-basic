@@ -60,11 +60,8 @@ place_overseas_order()         # /trading/order (일반 주문)
 
 | 변수 | 값 | 역할 |
 |------|----|------|
-| `KIS_MODE` | `real` / `demo` | 실계좌 또는 모의계좌 선택 |
-| `TRADE_MODE` | `LIVE` / `DRY` | 실제 주문 실행 여부 |
-
-- `DRY`: 주문 정보만 출력하고 실제 API는 호출하지 않습니다.
-- `LIVE`: 실제 주문 API를 호출합니다.
+| `KIS_MODE` | `real` / `demo` | KIS Open API 환경 선택(실전/모의). 기본값은 `demo`입니다. `real` 선택 시 실계좌(`KIS_ACCOUNT_NO`)를 사용하고 API 도메인은 `https://openapi.koreainvestment.com:9443`로 설정됩니다. `demo`는 모의 도메인 `https://openapivts.koreainvestment.com:29443`과 `KIS_ACCOUNT_NO_DEMO`를 사용합니다. |
+| `TRADE_MODE` | `LIVE` / `DRY` | 실제 주문 실행 여부. `DRY`는 주문 정보만 출력합니다. 입력값이 유효하지 않으면 경고를 출력하고 기본값 `DRY`로 동작합니다. |
 
 ---
 
@@ -77,14 +74,19 @@ KIS_APP_KEY=your_app_key
 KIS_APP_SECRET=your_app_secret
 KIS_ACCOUNT_NO=12345678        # 실계좌 번호
 KIS_ACCOUNT_NO_DEMO=87654321   # 모의계좌 번호
-KIS_MODE=demo                  # demo 또는 real
-TRADE_MODE=DRY                 # DRY 또는 LIVE
+KIS_MODE=demo                  # demo 또는 real (기본: demo)
+TRADE_MODE=DRY                 # DRY 또는 LIVE (잘못된 값은 DRY로 대체됨)
 SYMBOL=TQQQ
 EXCHANGE=NAS
 SPLITS=40
 TAKE_PROFIT=0.10
 BIG_BUY_RANGE=0.10
 ```
+
+환경 변수 관련 주요 동작 요약:
+
+- **다중 종목 지원**: `SYMBOLS`에 `TQQQ:NAS,SOXL:AMS` 형태로 복수 종목을 지정할 수 있습니다. 지정하지 않으면 `SYMBOL` + `EXCHANGE`를 사용하고, 둘 다 없으면 기본으로 `TQQQ:NAS`와 `SOXL:AMS`가 사용됩니다.
+- **종목별 설정 우선순위**: `{SYMBOL}_SPLITS`, `{SYMBOL}_TAKE_PROFIT`, `{SYMBOL}_BIG_BUY_RANGE`, `{SYMBOL}_SEED` 같은 종목 전용 환경변수를 사용하면 전역 값(`SPLITS`, `TAKE_PROFIT`, `BIG_BUY_RANGE`)보다 우선합니다. 전용 변수가 없으면 전역 기본값을 사용합니다.
 
 ```bash
 uv run python trading_bot.py
@@ -104,6 +106,31 @@ uv run python trading_bot.py
 | `KIS_ACCOUNT_NO_DEMO` | ✅ | 모의 계좌번호 |
 | `TELEGRAM_BOT_TOKEN` | 선택 | 텔레그램 봇 토큰 |
 | `TELEGRAM_CHAT_ID` | 선택 | 텔레그램 채팅 ID |
+
+### 워크플로우별 비밀키(권장 네이밍)
+
+워크플로우는 실전/모의용 키를 구분해서 사용하도록 설계되어 있습니다. 실전 키와 모의 키를 별도로 등록해 사용하는 것을 권장합니다:
+
+- `KIS_APP_KEY`: 실전(라이브) 앱 키
+- `KIS_APP_SECRET`: 실전 앱 시크릿
+- `KIS_APP_KEY_DEMO`: 모의(데모) 앱 키
+- `KIS_APP_SECRET_DEMO`: 모의 앱 시크릿
+- `KIS_ACCOUNT_NO`: 실전 계좌번호
+- `KIS_ACCOUNT_NO_DEMO`: 모의 계좌번호
+
+예를 들어 `.github/workflows/trade_demo.yml`은 데모 전용 시크릿을 재사용 워크플로우로 전달합니다:
+
+```yaml
+secrets:
+  KIS_APP_KEY: ${{ secrets.KIS_APP_KEY_DEMO }}
+  KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET_DEMO }}
+  KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
+  KIS_ACCOUNT_NO_DEMO: ${{ secrets.KIS_ACCOUNT_NO_DEMO }}
+```
+
+이렇게 하면 동일한 재사용 워크플로우(`.github/workflows/trade_base.yml`)를 사용하더라도, 데모 실행 시 데모 전용 키/계좌가 전달되어 실계좌 사용 실수를 방지할 수 있습니다.
+
+`trade_real.yml`은 실전 키(`KIS_APP_KEY`, `KIS_APP_SECRET`)를 사용하도록 설정되어 있으니, 실전 배포 전 키 설정을 반드시 확인하세요.
 
 ### Repository Variables (`Settings > Secrets and variables > Actions > Variables`)
 
