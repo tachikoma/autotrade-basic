@@ -835,9 +835,9 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, sid
     
     # Step 3: TR_ID 결정 (실전/모의 및 매수/매도에 따라 다름)
     # 매수: TTTT1002U (실전) / VTTT1002U (모의)
-    # 매도: TTTT1006U (실전) / VTTT1006U (모의)
+    # 매도: TTTT1006U (실전) / VTTT1001U (모의)
     if side == "SELL":
-        tr_id = "TTTT1006U" if KIS_MODE == "real" else "VTTT1006U"
+        tr_id = "TTTT1006U" if KIS_MODE == "real" else "VTTT1001U"
     else:
         tr_id = "TTTT1002U" if KIS_MODE == "real" else "VTTT1002U"
     
