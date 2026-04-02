@@ -760,6 +760,19 @@ def place_overseas_order(symbol, exchange_code, order_type, quantity, price, sid
     if not KIS_ACCOUNT_NO:
         raise Exception("KIS_ACCOUNT_NO가 설정되어 있지 않습니다. .env 파일에 KIS_ACCOUNT_NO를 추가하세요.")
 
+    # 모의투자에서 지원하지 않는 주문 유형을 대체합니다.
+    # 한국투자증권 모의투자 API는 LOC(34·장마감지정가) 등 일부 주문 유형을 지원하지 않습니다.
+    # 모의투자 환경에서는 LOC 주문을 LIMIT(지정가)으로 자동 변환합니다.
+    try:
+        kis_mode_for_type = KIS_MODE
+    except NameError:
+        kis_mode_for_type = "demo"
+
+    DEMO_UNSUPPORTED_ORDER_TYPES = {"LOC", "LOO", "MOO", "MOC"}
+    if kis_mode_for_type != "real" and order_type in DEMO_UNSUPPORTED_ORDER_TYPES:
+        print(f"⚠️  모의투자 미지원 주문 유형: {order_type} → LIMIT(지정가)으로 자동 변환합니다.")
+        order_type = "LIMIT"
+
     # 주문 구분 코드 매핑
     order_type_map = {
         "LIMIT": "00",  # 지정가
