@@ -8,31 +8,20 @@ load_dotenv()
 # 한국투자증권 API 설정
 KIS_APP_KEY = os.getenv("KIS_APP_KEY", "")
 KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", "")
-# 실계좌(기본) 계좌번호와 모의계좌(데모) 계좌번호를 분리해서 읽습니다.
-# .env 예시: KIS_ACCOUNT_NO=12345678, KIS_ACCOUNT_NO_DEMO=87654321
-KIS_ACCOUNT_NO_REAL = os.getenv("KIS_ACCOUNT_NO", "")
-KIS_ACCOUNT_NO_DEMO = os.getenv("KIS_ACCOUNT_NO_DEMO", "")
+# 계좌번호는 KIS_ACCOUNT_NO 하나로 관리합니다.
+KIS_ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
 
 # 한국투자증권 API 엔드포인트
 # 환경변수 `KIS_MODE`로 demo(모의) 또는 real(실전) 환경을 선택합니다.
 # 기본값은 demo(모의)입니다. .env 예: KIS_MODE=real
-#
-# KIS_MODE 값 매핑:
-# - "real": https://openapi.koreainvestment.com:9443
-# - 기타(기본): https://openapivts.koreainvestment.com:29443 (모의)
 KIS_MODE = os.getenv("KIS_MODE", "demo").strip().lower()
 if KIS_MODE == "real":
 	KIS_DOMAIN = "https://openapi.koreainvestment.com:9443"
-	# 실전 모드 선택 시 실계좌를 사용합니다. 환경변수 미설정시 경고 출력
-	KIS_ACCOUNT_NO = KIS_ACCOUNT_NO_REAL
-	if not KIS_ACCOUNT_NO:
-		print("경고: KIS_MODE=real 이지만 KIS_ACCOUNT_NO(실계좌)가 설정되어 있지 않습니다.")
 else:
 	KIS_DOMAIN = "https://openapivts.koreainvestment.com:29443"
-	# 데모(모의) 모드에서는 데모 계좌를 사용합니다. 환경변수 미설정시 경고 출력
-	KIS_ACCOUNT_NO = KIS_ACCOUNT_NO_DEMO
-	if not KIS_ACCOUNT_NO:
-		print("경고: KIS_MODE=demo 이지만 KIS_ACCOUNT_NO_DEMO(모의계좌)가 설정되어 있지 않습니다.")
+
+if not KIS_ACCOUNT_NO:
+	print(f"경고: KIS_MODE={KIS_MODE} 이지만 KIS_ACCOUNT_NO가 설정되어 있지 않습니다.")
 
 # 전략 파라미터 (종목별 기본값으로 사용되므로 _parse_symbols() 호출 전에 정의)
 SPLITS = int(os.getenv("SPLITS") or "40")  # 분할 수

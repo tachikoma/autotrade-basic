@@ -42,8 +42,6 @@ on:
         required: true
       KIS_ACCOUNT_NO:
         required: false
-      KIS_ACCOUNT_NO_DEMO:
-        required: false
       TELEGRAM_BOT_TOKEN:
         required: false
       TELEGRAM_CHAT_ID:
@@ -78,9 +76,8 @@ jobs:
           # KIS 인증정보 (reusable workflow는 호출자에서 secrets을 주입받습니다)
           KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
-          # 계좌 정보는 호출자에서 두 종류를 모두 전달할 수 있습니다.
+          # 계좌 정보는 호출자에서 주입받은 값을 사용합니다.
           KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
-          KIS_ACCOUNT_NO_DEMO: ${{ secrets.KIS_ACCOUNT_NO_DEMO }}
 
           # 런타임 설정: inputs -> repo vars -> 하드코딩 기본값 순으로 폴백
           KIS_MODE: ${{ inputs.kis_mode || vars.KIS_MODE || 'demo' }}
