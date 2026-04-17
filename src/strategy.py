@@ -65,6 +65,7 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
         take_profit_rate (float): 익절 상승률 (예: 0.10 = 10%)
         big_buy_range (float): 큰수 상승률 (예: 0.10 = 10%)
         seed (float): 이 종목에 투입할 최대 금액 (달러). 0이면 계좌 전체 주문가능금액 사용
+            이미 보유한 주식 평가금액은 이 한도에서 차감됩니다.
     
     Returns:
         dict: DryRun 결과
@@ -76,6 +77,8 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
             - position_qty: 보유 수량
             - avg_price: 평단가
             - orderable_cash: 주문 가능 금액
+            - seed: 설정된 시드 한도
+            - remaining_seed: 보유 평가금액을 차감한 남은 시드 한도
             - unit_qty: 단위 주문 수량
             - max_position: 최대 포지션
             - take_profit_price: 익절가
@@ -126,11 +129,17 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
     psamount = get_overseas_purchase_amount(symbol, exchange_code)
     orderable_cash = float(psamount.get("ord_psbl_frcr_amt", "0"))
 
-    # 시드가 설정된 경우, 실제 주문가능금액과 시드 중 작은 값을 사용합니다.
-    # 예: 계좌에 $50,000 있어도 TQQQ_SEED=10000 이면 $10,000 범위 내에서만 매매합니다.
+    # 시드가 설정된 경우, 현재 보유한 주식 평가금액을 차감한 남은 시드 한도만 사용합니다.
+    # 예: TQQQ_SEED=10000 이고 현재 보유 주식 평가금액이 $8,000이면, 남은 시드는 $2,000입니다.
+    remaining_seed = None
     if seed > 0:
-        orderable_cash = min(orderable_cash, seed)
-        print(f"  시드 적용: ${seed:.2f} (계좌 주문가능금액과 비교 후 ${orderable_cash:.2f} 사용)")
+        current_position_value = position_qty * last_price
+        remaining_seed = max(seed - current_position_value, 0.0)
+        orderable_cash = min(orderable_cash, remaining_seed)
+        print(
+            f"  시드 적용: ${seed:.2f} (보유 평가금액 ${current_position_value:.2f} 차감 후 "
+            f"${orderable_cash:.2f} 사용)"
+        )
     
     # ========================================
     # 4. unit_qty 결정
@@ -156,9 +165,10 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
                 buy_quantities.append(qty)
         
         if buy_quantities:
-            # 최빈값을 unit_qty로 설정
+            # 최빈값을 unit_qty로 설정하되, 남은 주문 가능 금액을 초과하지 않도록 합니다.
             counter = Counter(buy_quantities)
-            unit_qty = counter.most_common(1)[0][0]
+            history_unit_qty = counter.most_common(1)[0][0]
+            unit_qty = min(history_unit_qty, math.floor(orderable_cash / last_price))
         else:
             # 매도 이후 매수가 없다면, 기본 계산식 사용
             base_cash = orderable_cash / (splits * 2)
@@ -168,8 +178,8 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
         base_cash = orderable_cash / (splits * 2)
         unit_qty = math.floor(base_cash / last_price)
     
-    # unit_qty가 0이면 잔고 부족 에러
-    if unit_qty == 0:
+    # 포지션이 없고 unit_qty가 0이면 잔고 부족 에러
+    if position_qty == 0 and unit_qty == 0:
         raise Exception(
             f"잔고 부족: 주문 가능 금액이 부족합니다. "
             f"현재 잔고: ${orderable_cash:.2f}"
@@ -249,6 +259,8 @@ def 무상태_무한매수법(symbol, exchange_code, splits, take_profit_rate, b
         "position_qty": position_qty,
         "avg_price": avg_price,
         "orderable_cash": orderable_cash,
+        "seed": seed,
+        "remaining_seed": remaining_seed,
         "unit_qty": unit_qty,
         "max_position": max_position,
         "take_profit_price": take_profit_price,
