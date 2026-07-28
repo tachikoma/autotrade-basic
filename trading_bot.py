@@ -510,7 +510,7 @@ def run_one_symbol(broker: Broker, symbol_config):
             if result:
                 is_additional = "[추가매수]" in order.get("comment", "")
 
-                # 기존: additional_loc_odno 유지 (레거시 호환)
+                # 기존: additional_loc_odno 유지 (미등록 호환)
                 if is_additional:
                     state.setdefault("additional_loc_odno", []).append(result.order_id)
 

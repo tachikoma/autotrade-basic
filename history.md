@@ -34,3 +34,18 @@
   - `trading_bot.py`: Real+LIVE 모드에서 프리장 오픈 전 KST 기준 sleep 로직 추가 (DST 17:00 / non-DST 18:00)
 - **운영 가이드:** 외부 cron 1회 dispatch — Demo KST 04:10, Real KST 17:30 (→ `docs/cron-dispatch-guide.md` 참조)
 - **커밋:** `d291d6a`, `57c7565`, `3656151`
+
+---
+
+## 2026-07-28 — KIS ODNO 정규화 + 미등록매수 용어 변경
+
+- **문제:** KIS 주문 접수 API는 ODNO leading zero 10자리(`0000052248`) 반환, 체결 조회 API는 trimmed(`52248`) 반환 → `orders_meta` 키 불일치로 체결 건이 "미등록매수"로 분류됨
+- **원인:** 양쪽 모두 `str(odno)`로 타입 통일 후 비교하지만 포맷 자체가 다름 → 절대 매칭 불가
+- **수정:**
+  - `src/state.py`: `_normalize_odno()` 함수 추가 — `str(int(odno))`로 leading zero 제거
+  - `register_order_meta_in_state` / `get_order_meta` — 저장/조회 모두 `_normalize_odno()` 적용
+  - `_infer_T_from_full_history` / `_apply_recent_history_dt` — 내부 orders_meta lookup 모두 정규화
+  - 용어: `레거시` → `미등록매수` 일괄 변경 (코드, 테스트)
+  - 디버그 로그: `[orders_meta 등록]`, `[orders_meta 조회]` 출력 추가
+- **테스트:** 31/31 통과 (test_state_t_updates.py)
+- **문서:** AGENTS.md, src/AGENTS.md, history.md 갱신

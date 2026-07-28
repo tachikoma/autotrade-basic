@@ -4,7 +4,7 @@ T값 업데이트 로직 유닛 테스트
 테스트 대상:
   - orders_meta의 t_target 기반 T 증가 (전반전/후반전 구분)
   - 추가매수(is_additional=True)는 T 변화 없음
-  - 레거시 폴백 (meta 없을 때 건수 기반: 1건→+0.5, 2건→+1.0)
+  - 미등록매수 폴백 (meta 없을 때 건수 기반: 1건→+0.5, 2건→+1.0)
   - _apply_recent_history_dt, _infer_T_from_full_history 모두 검증
 """
 
@@ -124,16 +124,16 @@ class TestApplyRecentHistory:
         result = update_T_from_history("TQQQ", state, orders)
         assert result["T"] == 2.0, f"T={result['T']} (expected 2.0)"
 
-    def test_추가매수_additional_loc_odno_레거시_T_변화없음(self):
-        """additional_loc_odno 목록에 있는 주문은 T 변화 없음 (레거시)."""
+    def test_추가매수_additional_loc_odno_미등록_T_변화없음(self):
+        """additional_loc_odno 목록에 있는 주문은 T 변화 없음 (미등록)."""
         state = _make_state(T=2.0, last_updated="2026-05-27 00:00:00",
                             additional_loc_odno=["ORD006"])
         orders = [_make_buy_order("ORD006", "20260528", qty=3)]
         result = update_T_from_history("TQQQ", state, orders)
         assert result["T"] == 2.0, f"T={result['T']} (expected 2.0)"
 
-    def test_레거시_폴백_2건_plus1(self):
-        """meta 없는 주문 2건 → 레거시 폴백 +1.0"""
+    def test_미등록매수_폴백_2건_plus1(self):
+        """meta 없는 주문 2건 → 미등록매수 폴백 +1.0"""
         state = _make_state(T=1.0, last_updated="2026-05-27 00:00:00")
         orders = [
             _make_buy_order("ORD007", "20260528", qty=3, utc_dt="2026-05-28T10:00:00+00:00"),
@@ -142,8 +142,8 @@ class TestApplyRecentHistory:
         result = update_T_from_history("TQQQ", state, orders)
         assert result["T"] == 2.0, f"T={result['T']} (expected 2.0)"
 
-    def test_레거시_폴백_1건_plus05(self):
-        """meta 없는 주문 1건 → 레거시 폴백 +0.5"""
+    def test_미등록매수_폴백_1건_plus05(self):
+        """meta 없는 주문 1건 → 미등록매수 폴백 +0.5"""
         state = _make_state(T=1.0, last_updated="2026-05-27 00:00:00")
         orders = [_make_buy_order("ORD009", "20260528", qty=3)]
         result = update_T_from_history("TQQQ", state, orders)
@@ -322,15 +322,15 @@ class TestInferTFromFullHistory:
         result = update_T_from_history("TQQQ", state, orders)
         assert result["T"] == 0.0, f"T={result['T']} (expected 0.0)"
 
-    def test_레거시_폴백_qty1_initial_mode(self):
-        """초기 모드 레거시: qty=1 첫 매수(avg_price=0) → 정상매수 → T+=0.5"""
+    def test_미등록매수_폴백_qty1_initial_mode(self):
+        """초기 모드 미등록매수: qty=1 첫 매수(avg_price=0) → 정상매수 → T+=0.5"""
         state = _make_state(T=0.0, last_updated="")
         orders = [_make_buy_order("ORD103", "20260528", qty=1)]
         result = update_T_from_history("TQQQ", state, orders)
         assert result["T"] == 0.5, f"T={result['T']} (expected 0.5)"
 
-    def test_레거시_폴백_qty2_초기모드_plus05(self):
-        """초기 모드 레거시: qty=2 단일 매수 → +0.5"""
+    def test_미등록매수_폴백_qty2_초기모드_plus05(self):
+        """초기 모드 미등록매수: qty=2 단일 매수 → +0.5"""
         state = _make_state(T=0.0, last_updated="")
         orders = [_make_buy_order("ORD104", "20260528", qty=2)]
         result = update_T_from_history("TQQQ", state, orders)
