@@ -837,6 +837,172 @@ class TestKiwoomBrokerContract(BrokerContractTest):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# KiwoomBroker 모의투자(demo) 계약 테스트 — ust21150
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestKiwoomDemoBrokerContract:
+    """
+    KiwoomBroker 모의투자(demo) 계약 테스트.
+
+    KiwoomSession.request_with_tr를 mock하여 ust21150(일별 주문체결내역)의
+    응답 처리와 빈 결과 로깅을 검증합니다.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_kiwoom_demo_dependencies(self, request):
+        fixed_kst = datetime(2026, 7, 28, 4, 15, 0, tzinfo=timezone.utc)
+        target = "broker.kiwoom.adapter"
+        patches = [
+            patch(f"{target}.KiwoomSession"),
+            patch(f"{target}.get_access_token", return_value="mock_token"),
+            patch(f"{target}.is_us_trading_day", return_value=True),
+            patch(f"{target}.get_kst_now", return_value=fixed_kst),
+            patch("config.BROKER_CONFIG", {
+                "app_key": "test", "app_secret": "test",
+                "account_no": "12345678",
+                "domain": "https://mockapi.kiwoom.com",
+                "acnt_prdt_cd": "",
+            }),
+            patch("config.BROKER_MODE", "demo"),
+            patch("config.HTTP_TIMEOUT", (10, 30)),
+        ]
+        for p in patches:
+            p.start()
+            request.addfinalizer(p.stop)
+        mock_session_cls = sys.modules[f"{target}"].KiwoomSession
+        mock_session_instance = MagicMock()
+        mock_session_cls.return_value = mock_session_instance
+        self._mock_session = mock_session_instance
+
+    def _create_broker(self):
+        from broker.kiwoom.adapter import KiwoomBroker
+        return KiwoomBroker()
+
+    def _make_demo_item(self, **overrides):
+        item = {
+            "ord_no": "1001",
+            "ord_time": "09:30:00",
+            "frgn_stk_nm": "TQQQ",
+            "slby_tp_nm": "매수",
+            "ord_qty": "10",
+            "cntr_qty": "10",
+            "cntr_uv": "50.00",
+            "ord_remnq": "0",
+            "ord_stat_nm": "체결완료",
+            "stex_nm": "NASDAQ",
+            "crnc_code": "USD",
+        }
+        item.update(overrides)
+        return item
+
+    def test_get_order_history_demo_returns_items(self):
+        """ust21150 정상 응답: result_list 항목들이 order_history에 포함되어야 함."""
+        from broker.kiwoom.tr_registry import TR_HISTORY_DEMO
+
+        def _side_effect(tr_id, body, token, extra_headers=None):
+            if tr_id != TR_HISTORY_DEMO:
+                return _make_response({"return_code": 0})
+            ord_dt = body.get("ord_dt", "")
+            if ord_dt == "20260728":
+                return _make_response({
+                    "return_code": 0,
+                    "result_list": [
+                        self._make_demo_item(ord_no="2001"),
+                        self._make_demo_item(ord_no="2002", cntr_qty="5", cntr_uv="55.00"),
+                    ],
+                })
+            return _make_response({"return_code": 0, "result_list": []})
+
+        self._mock_session.request_with_tr.side_effect = _side_effect
+        broker = self._create_broker()
+        history = broker.get_order_history("TQQQ", "NAS", days=1)
+
+        assert len(history) == 2
+        assert history[0]["odno"] == "2001"
+        assert history[1]["odno"] == "2002"
+
+    def test_get_order_history_demo_empty_result(self):
+        """ust21150 빈 결과: 모든 날짜 result_list=[] → 빈 리스트 반환."""
+        from broker.kiwoom.tr_registry import TR_HISTORY_DEMO
+
+        def _side_effect(tr_id, body, token, extra_headers=None):
+            if tr_id != TR_HISTORY_DEMO:
+                return _make_response({"return_code": 0})
+            return _make_response({"return_code": 0, "result_list": []})
+
+        self._mock_session.request_with_tr.side_effect = _side_effect
+        broker = self._create_broker()
+        history = broker.get_order_history("TQQQ", "NAS", days=1)
+
+        assert len(history) == 0
+
+    def test_get_order_history_demo_501724_error(self):
+        """ust21150 501724 에러: BrokerError가 날짜 루프에서 처리되어 빈 리스트 반환."""
+        from broker.kiwoom.tr_registry import TR_HISTORY_DEMO
+
+        call_count = 0
+        def _side_effect(tr_id, body, token, extra_headers=None):
+            nonlocal call_count
+            if tr_id == TR_HISTORY_DEMO:
+                call_count += 1
+                if call_count == 1:
+                    raise BrokerError("키움 API 오류 (return_code=20): 501724: 관련자료가 없습니다")
+                return _make_response({"return_code": 0, "result_list": []})
+            return _make_response({"return_code": 0})
+
+        self._mock_session.request_with_tr.side_effect = _side_effect
+        broker = self._create_broker()
+        history = broker.get_order_history("TQQQ", "NAS", days=1)
+
+        assert len(history) == 0
+
+    def test_get_order_history_demo_field_normalization(self):
+        """ust21150 응답 필드가 표준 필드로 정확히 변환되어야 함."""
+        from broker.kiwoom.tr_registry import TR_HISTORY_DEMO
+
+        def _side_effect(tr_id, body, token, extra_headers=None):
+            if tr_id != TR_HISTORY_DEMO:
+                return _make_response({"return_code": 0})
+            ord_dt = body.get("ord_dt", "")
+            if ord_dt == "20260728":
+                return _make_response({
+                    "return_code": 0,
+                    "result_list": [self._make_demo_item(
+                        ord_no="12345",
+                        ord_time="14:30:00",
+                        cntr_qty="3",
+                        cntr_uv="52.50",
+                    )],
+                })
+            return _make_response({"return_code": 0, "result_list": []})
+
+        self._mock_session.request_with_tr.side_effect = _side_effect
+        broker = self._create_broker()
+        history = broker.get_order_history("TQQQ", "NAS", days=1)
+
+        assert len(history) == 1
+        item = history[0]
+        standard_fields = {
+            "ord_dt", "ord_tmd", "ord_datetime_kst", "ord_datetime_utc",
+            "prdt_name", "sll_buy_dvsn_cd_name", "ft_ord_qty", "ft_ccld_qty",
+            "ft_ccld_unpr3", "ft_ccld_amt3", "nccs_qty", "prcs_stat_name",
+            "tr_mket_name", "tr_crcy_cd", "odno", "ovrs_excg_cd",
+        }
+        missing = standard_fields - set(item.keys())
+        assert not missing, f"표준 필드 누락: {missing}"
+
+        assert item["odno"] == "12345"
+        assert item["sll_buy_dvsn_cd_name"] == "매수"
+        assert item["ft_ccld_qty"] == "3"
+        assert item["ft_ccld_unpr3"] == "52.5"
+        assert item["ft_ccld_amt3"] == "157.5"
+        assert item["ord_dt"] == "20260728"
+        assert item["prdt_name"] == "TQQQ"
+        assert item["tr_mket_name"] == "NASDAQ"
+        assert item["ovrs_excg_cd"] == ""
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # TossBroker 계약 테스트
 # ═══════════════════════════════════════════════════════════════════════
 

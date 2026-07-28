@@ -49,3 +49,15 @@
   - 디버그 로그: `[orders_meta 등록]`, `[orders_meta 조회]` 출력 추가
 - **테스트:** 31/31 통과 (test_state_t_updates.py)
 - **문서:** AGENTS.md, src/AGENTS.md, history.md 갱신
+
+---
+
+## 2026-07-28 — KIWOOM ust21150 빈 결과 로깅 + 단위 테스트
+
+- **문제:** KIWOOM 모의투자(ust21150)가 빈 결과/501724 에러 시 날짜별 로그 없이 조용히 스킵 → 7/24 데이터 누락 원인 추적 불가
+- **수정:**
+  - `src/broker/kiwoom/adapter.py`: 빈 `result_list`/501724 에러 시 날짜별 `[정보]` 로그 출력
+  - `tests/test_broker_contract.py`: `TestKiwoomDemoBrokerContract` 추가 — ust21150 정상/빈결과/501724/필드정규화 4개 유닛 테스트
+  - `tests/test_kiwoom_order_history.py`: KIWOOM 주문이력 통합 테스트 신규 (`BROKER=kiwoom` 환경변수 필요)
+- **테스트:** 102/102 통과 (3 skipped)
+- **문서:** AGENTS.md, history.md 갱신

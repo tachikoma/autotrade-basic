@@ -532,14 +532,15 @@ class KiwoomBroker(Broker):
                 try:
                     data = self._request_with_rate_retry(tr_id, body, token)
                     raw_items = data.get("result_list", [])
+                    if not raw_items:
+                        print(f"  [정보] {dt} 체결내역 없음 (빈 결과)")
                     for item in raw_items:
                         normalized = self._normalize_ust21150_item(item, ord_dt=dt)
                         order_history.append(normalized)
                 except BrokerError as e:
-                    # 빈 결과(501724)는 정상이므로 조용히 건너뛰고, 그 외 실패만 로깅.
                     msg = str(e)
                     if "501724" in msg or "관련자료가 없습니다" in msg:
-                        pass  # 해당 날짜 체결내역 없음 — 정상
+                        print(f"  [정보] {dt} 체결내역 없음 (API: 관련자료 없음)")
                     else:
                         print(f"[주문이력] {dt} 조회 실패: {msg[:80]}")
                 time.sleep(self._rate_limit_wait)  # 모의투자 1회/초 rate-limit
