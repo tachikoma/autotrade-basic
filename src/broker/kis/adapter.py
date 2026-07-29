@@ -468,7 +468,7 @@ class KISBroker(Broker):
                         "prcs_stat_name": item.get("prcs_stat_name", ""),
                         "tr_mket_name": item.get("tr_mket_name", ""),
                         "tr_crcy_cd": item.get("tr_crcy_cd", ""),
-                        "odno": item.get("odno", ""),
+                        "odno": str(int(item.get("odno", "0"))) if item.get("odno", "").isdigit() else item.get("odno", ""),
                         "ovrs_excg_cd": item.get("ovrs_excg_cd", ""),
                     })
 
@@ -635,6 +635,8 @@ class KISBroker(Broker):
 
             output = response_data.get("output", {})
             order_id = output.get("ODNO", "")
+            if order_id.isdigit():
+                order_id = str(int(order_id))
 
             print("\n========== [LIVE 모드] 주문 성공 ==========")
             print(f"종목 코드: {symbol}")

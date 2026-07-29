@@ -142,11 +142,6 @@ def save_state(symbol, state_dict):
     print(f"[상태] {symbol} 상태 저장 완료 → T={T}, effective_seed=${effective_seed:.2f}, last_updated={last_upd}, last_processed_ordno={last_ordno}, balance_mismatch={mismatch_flag}")
 
 
-def _normalize_odno(odno) -> str:
-    """ODNO 정규화: KIS API 포맷 차이(leading zero)를 제거합니다."""
-    return str(int(odno)) if str(odno).strip().lstrip("-").isdigit() else str(odno)
-
-
 def register_order_meta_in_state(state, odno, meta):
     """
     주문 메타 정보를 state의 orders_meta에 저장합니다.
@@ -161,14 +156,14 @@ def register_order_meta_in_state(state, odno, meta):
             - is_additional (bool): 추가매수 여부 (True면 T 변화 없음)
             - processed_filled_qty (int): 이미 T에 반영된 체결 수량
     """
-    normalized = _normalize_odno(odno)
+    normalized = str(odno)
     state.setdefault("orders_meta", {})[normalized] = meta
     print(f"[orders_meta 등록] odno={normalized} (원본={odno}), t_target={meta.get('t_target')}")
 
 
 def get_order_meta(state, odno):
     """state의 orders_meta에서 odno 메타를 반환하거나 None."""
-    return state.get("orders_meta", {}).get(_normalize_odno(odno))
+    return state.get("orders_meta", {}).get(str(odno))
 
 
 def update_T_from_history(symbol, state, order_history, balance_qty=None):
@@ -391,7 +386,7 @@ def _infer_T_from_full_history(symbol, state, order_history):
 
         def _is_additional_buy(o, avg_price, net_qty_before=0):
             """return True if this buy is an additional (extra) buy that should NOT increment T"""
-            odno = _normalize_odno(o.get("odno", ""))
+            odno = str(o.get("odno", ""))
             if odno and odno in orders_meta:
                 return bool(orders_meta[odno].get("is_additional", False))
 
@@ -419,7 +414,7 @@ def _infer_T_from_full_history(symbol, state, order_history):
             qty = int(float(o.get("ft_ccld_qty", "0")))
             fill_price = float(o.get("ft_ccld_unpr3", "0"))
             fill_ratio = (fill_price / current_avg_price) if current_avg_price > 0 and fill_price > 0 else 0.0
-            odno = _normalize_odno(o.get("odno", ""))
+            odno = str(o.get("odno", ""))
             has_meta = "있음" if odno and odno in orders_meta else "없음"
             print(f"  [디버그] 매수 분류({ord_dt}): odno={odno}, "
                   f"qty={qty}, fill_price=${fill_price:.2f}, "
@@ -449,10 +444,10 @@ def _infer_T_from_full_history(symbol, state, order_history):
         if normal_buys:
             if T == 0:
                 cycle_start_ord_dt = ord_dt
-            meta_buys         = [o for o in normal_buys if orders_meta.get(_normalize_odno(o.get("odno", "")))]
-            unregistered_buys = [o for o in normal_buys if not orders_meta.get(_normalize_odno(o.get("odno", "")))]
+            meta_buys         = [o for o in normal_buys if orders_meta.get(str(o.get("odno", "")))]
+            unregistered_buys = [o for o in normal_buys if not orders_meta.get(str(o.get("odno", "")))]
             for o in meta_buys:
-                odno = _normalize_odno(o.get("odno", ""))
+                odno = str(o.get("odno", ""))
                 meta = orders_meta[odno]
                 qty = int(float(o.get("ft_ccld_qty", "0")))
                 total_qty = int(meta.get("total_qty") or qty)
@@ -740,11 +735,11 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
 
         skip_buys   = [
             (o_dt, odno, o) for o_dt, odno, o in day_buys
-            if str(odno) in additional_loc_odno or orders_meta.get(_normalize_odno(odno), {}).get("is_additional")
+            if str(odno) in additional_loc_odno or orders_meta.get(str(odno), {}).get("is_additional")
         ]
         normal_buys = [
             (o_dt, odno, o) for o_dt, odno, o in day_buys
-            if str(odno) not in additional_loc_odno and not orders_meta.get(_normalize_odno(odno), {}).get("is_additional")
+            if str(odno) not in additional_loc_odno and not orders_meta.get(str(odno), {}).get("is_additional")
         ]
 
         for o_dt, odno, order in skip_buys:
@@ -766,15 +761,15 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
                 print(f"  → 새 사이클 시작일 기록: {cycle_start}")
 
             # meta가 있는 주문: t_target 기반으로 각각 반영 (부분체결 비례 처리)
-            meta_buys         = [(o_dt, odno, o) for o_dt, odno, o in normal_buys if orders_meta.get(_normalize_odno(odno))]
-            unregistered_buys = [(o_dt, odno, o) for o_dt, odno, o in normal_buys if not orders_meta.get(_normalize_odno(odno))]
+            meta_buys         = [(o_dt, odno, o) for o_dt, odno, o in normal_buys if orders_meta.get(str(odno))]
+            unregistered_buys = [(o_dt, odno, o) for o_dt, odno, o in normal_buys if not orders_meta.get(str(odno))]
             if meta_buys:
                 print(f"  [디버그] orders_meta 매칭: 정상매수 {len(meta_buys)}건")
             if unregistered_buys:
                 print(f"  [디버그] orders_meta 미매칭(미등록매수): {len(unregistered_buys)}건")
 
             for o_dt, odno, order in meta_buys:
-                meta = orders_meta[_normalize_odno(odno)]
+                meta = orders_meta[str(odno)]
                 qty = int(float(order.get("ft_ccld_qty", "0")))
                 total_qty = int(meta.get("total_qty") or qty)
                 processed = int(meta.get("processed_filled_qty", 0))

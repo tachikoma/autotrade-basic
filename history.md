@@ -1,5 +1,17 @@
 # 작업 히스토리
 
+## 2026-07-29 — ODNO 정규화 책임을 KIS adapter로 이동
+
+- **문제:** `_normalize_odno()`가 state.py에 전역 정의되어 있으나, KIS만 leading zero 불일치가 있고 Kiwoom/LS/Toss는 해당 없음 → 계층 위반
+- **수정:**
+  - `src/broker/kis/adapter.py`: `place_order()` / `get_order_history()`에서 자체 정규화 (`str(int(odno))`)
+  - `src/state.py`: `_normalize_odno()` 함수 제거, 모든 호출 `str(odno)`로 대체
+  - `AGENTS.md`, `src/AGENTS.md`: 문서 갱신
+- **테스트:** 31/31 통과 (test_state_t_updates.py), dryrun 정상
+- **참고:** `381ccaa`(int odno), `74f6581`(KIS 정규화) 후속 리팩터 — KIS 전용 버그를 KIS adapter로 국한
+
+---
+
 ## 2026-06-23 — `_apply_recent_history_dt` odno 타입 버그 수정
 
 - **문제:** SOXL T값이 1.0이 아닌 0.5로 계산됨. 전량매도 시 사이클 종료 리포트 미생성.

@@ -102,5 +102,5 @@ uv run pytest tests/ -v
 - **시드 설정 필수**: 모든 종목에 `{SYMBOL}_SEED` 설정 필수 (달러 금액만 허용, FULL 미지원)
 - **KIWOOM/LS/TOSS**: `BROKER_CONFIG`에 `account_no` 불필요 (AppKey/Secret만으로 API 호출 가능)
 - **주문 시각**: 모든 브로커에서 `get_kst_now()` 사용 (API 응답 시간 미사용)
-- **KIS ODNO 정규화**: 주문 접수 API는 leading zero 10자리(`0000052248`), 체결 조회는 trimmed(`52248`) 반환 → `state.py:_normalize_odno()`로 정규화 후 orders_meta 저장/조회
+- **KIS ODNO 정규화**: 주문 접수 API는 leading zero 10자리(`0000052248`), 체결 조회는 trimmed(`52248`) 반환 → `kis/adapter.py`에서 `str(int(odno))`로 정규화 후 반환 (다른 브로커는 해당 없음)
 - **KIWOOM 모의투자 주문이력(ust21150)**: 날짜별 개별 조회, 빈 결과/`501724` 에러 시 `[정보]` 로그 출력 (line 534-545)
