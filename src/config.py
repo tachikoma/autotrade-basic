@@ -175,6 +175,10 @@ def _parse_symbols():
 				f"{sym}_SEED는 0보다 커야 합니다 (입력값: {seed_raw})"
 			)
 
+		# T값 강제 설정 (env var, 1회성 보정용)
+		force_t = os.getenv(f"{sym}_FORCE_T", "").strip()
+		max_t = os.getenv(f"{sym}_MAX_T", "").strip()
+
 		result.append({
 			"symbol": sym,
 			"exchange": exch,
@@ -193,6 +197,11 @@ def _parse_symbols():
 				or os.getenv("ADDITIONAL_LOC_LEVELS")
 				or "3"
 			),
+			# T값 강제 설정 (환경변수, 1회성 보정)
+			# {SYMBOL}_FORCE_T: 설정 시 state.json의 T를 이 값으로 덮어씁니다
+			"force_t": float(force_t) if force_t else None,
+			# {SYMBOL}_MAX_T: T 자동추정 결과의 상한선 (분할수 초과 방지)
+			"max_t": float(max_t) if max_t else None,
 		})
 
 	return result
@@ -224,6 +233,12 @@ COMMISSION_RATE = float(os.getenv("COMMISSION_RATE") or "0.0025")
 # .env 예: REINVEST=false
 _reinvest_raw = (os.getenv("REINVEST") or "true").strip().lower()
 REINVEST = _reinvest_raw == "true"
+
+# T값 강제 재추정 플래그
+# true로 설정 시 state.json의 last_updated를 초기화하여 전체 주문 이력에서 T를 재추정합니다.
+# GitHub Actions에서 state 캐시가 깨졌거나 state 없이 시작한 경우 사용합니다.
+# .env 예: FORCE_T_REINFERENCE=true
+FORCE_T_REINFERENCE = os.getenv("FORCE_T_REINFERENCE", "").strip().lower() == "true"
 
 # Finnhub API 키 (선택 — LS 모의투자 전용 fallback)
 # LS 모의투자 환경은 g3101 해외주식 현재가 조회를 지원하지 않으므로,

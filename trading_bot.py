@@ -208,6 +208,14 @@ def run_one_symbol(broker: Broker, symbol_config):
 
     state = load_state(symbol)
 
+    force_t = symbol_config.get("force_t")
+    max_t = symbol_config.get("max_t")
+
+    from config import FORCE_T_REINFERENCE as _force_reinference
+    if _force_reinference and state.get("last_updated"):
+        print(f"[T 보정] FORCE_T_REINFERENCE=true → last_updated 초기화 (전체 이력 재추정)")
+        state["last_updated"] = ""
+
     # 주문 이력 조회 기간을 상황에 맞게 계산합니다
     cycle_start_date = state.get("cycle_start_date", "")
     last_updated = state.get("last_updated", "")
@@ -254,6 +262,11 @@ def run_one_symbol(broker: Broker, symbol_config):
         live_avg = None
 
     state = update_T_from_history(symbol, state, order_history, balance_qty=live_qty)
+
+    # ── T값 상한 적용 (MAX_T) ──
+    if max_t is not None and state["T"] > max_t:
+        print(f"[T 보정] {symbol} T={state['T']} > MAX_T={max_t} → T={max_t}로 조정")
+        state["T"] = max_t
 
     # ── 사이클 종료 감지 (전체 재추정 경로) ──
     # _infer_T_from_full_history가 전량매도를 감지해 T=0으로 리셋한 경우,
@@ -355,6 +368,15 @@ def run_one_symbol(broker: Broker, symbol_config):
             if state.get("balance_mismatch"):
                 state.pop("balance_mismatch", None)
                 save_state(symbol, state)
+
+    # ── T값 강제 설정 (FORCE_T) ──
+    if force_t is not None:
+        old_T = state["T"]
+        state["T"] = force_t
+        state.pop("balance_mismatch", None)
+        state["orders_meta"] = {}
+        state["additional_loc_odno"] = []
+        print(f"[T 보정] {symbol} FORCE_T={force_t} 적용 (이전 T={old_T}), orders_meta/balance_mismatch 초기화")
 
     T = state["T"]
     print(f"  현재 T값: {T}")
