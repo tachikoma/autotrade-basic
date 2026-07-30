@@ -177,13 +177,14 @@ def _parse_symbols():
 
 		# T값 강제 설정 (env var, 1회성 보정용)
 		force_t = os.getenv(f"{sym}_FORCE_T", "").strip()
-		max_t = os.getenv(f"{sym}_MAX_T", "").strip()
+		max_t_raw = os.getenv(f"{sym}_MAX_T", "").strip()
+		splits = int(os.getenv(f"{sym}_SPLITS") or "40")
 
 		result.append({
 			"symbol": sym,
 			"exchange": exch,
 			# V4는 종목별 분할 수를 직접 사용합니다.
-			"splits": int(os.getenv(f"{sym}_SPLITS") or "40"),
+			"splits": splits,
 			"seed": seed,
 			# 별지점 공식 선택용 종목 타입: "TQQQ" 또는 "SOXL"
 			# - TQQQ: 20분할 별% = (15-1.5T)%, 40분할 별% = (15-0.75T)%
@@ -200,8 +201,8 @@ def _parse_symbols():
 			# T값 강제 설정 (환경변수, 1회성 보정)
 			# {SYMBOL}_FORCE_T: 설정 시 state.json의 T를 이 값으로 덮어씁니다
 			"force_t": float(force_t) if force_t else None,
-			# {SYMBOL}_MAX_T: T 자동추정 결과의 상한선 (분할수 초과 방지)
-			"max_t": float(max_t) if max_t else None,
+			# {SYMBOL}_MAX_T: T 자동추정 결과의 상한선 (기본값: splits-1)
+			"max_t": float(max_t_raw) if max_t_raw else splits - 1,
 		})
 
 	return result
