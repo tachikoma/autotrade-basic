@@ -382,6 +382,7 @@ def run_one_symbol(broker: Broker, symbol_config):
         state["orders_meta"] = {}
         state["additional_loc_odno"] = []
         print(f"[T 보정] {symbol} FORCE_T={force_t} 적용 (이전 T={old_T}), orders_meta/balance_mismatch 초기화")
+        save_state(symbol, state)
 
     T = state["T"]
     print(f"  현재 T값: {T}")
