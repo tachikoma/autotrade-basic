@@ -458,16 +458,28 @@ def run_one_symbol(broker: Broker, symbol_config):
         seed=seed,
         T=T,
         additional_loc_levels=additional_loc_levels,
+        state=state,
     )
 
+    last_price = strategy_result['last_price']
+    close_prices = state.get("close_prices", [])
+    if last_price > 0:
+        close_prices = [p for p in close_prices if isinstance(p, (int, float)) and p > 0]
+        close_prices.append(round(last_price, 2))
+        state["close_prices"] = close_prices[-5:]
+
     print("✓ 전략 실행 완료")
-    print(f"  현재가: ${strategy_result['last_price']}")
+    print(f"  현재가: ${last_price}")
     print(f"  보유 수량: {strategy_result['position_qty']}주")
     print(f"  평단가: ${strategy_result['avg_price']}")
     print(f"  주문 가능 금액: ${strategy_result['orderable_cash']:.2f}")
     print(f"  T값: {T} / {splits}")
     if strategy_result['star_point']:
         print(f"  별지점: ${strategy_result['star_point']:.2f}")
+
+    rev = state.get("reverse_mode", {})
+    if rev.get("day_count", 0) > 0:
+        print(f"  [리버스모드] {rev['day_count']}일차 진행 중")
 
     orders = strategy_result["orders"]
 
@@ -607,8 +619,13 @@ def run_one_symbol(broker: Broker, symbol_config):
     print(f"{symbol} 처리 완료")
     print("=" * 60)
 
-    # ── Step 4: T값 저장 (LIVE 주문이 하나라도 성공한 경우에만) ──
+    # ── Step 4: T값 저장 (LIVE 주문 성공 or 리버스모드 or 상태 변경) ──
+    should_save = False
     if TRADE_MODE == "LIVE" and (len(executed_orders) > 0 or len(reserved_orders) > 0):
+        should_save = True
+    if state.get("reverse_mode", {}).get("day_count", 0) > 0:
+        should_save = True
+    if should_save:
         save_state(symbol, state)
 
     if TRADE_MODE == "DRY":

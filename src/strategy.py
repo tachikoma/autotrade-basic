@@ -2,6 +2,7 @@
 import math
 from config import TRADE_MODE, LS_DEMO_BYPASS_BUGS
 from broker.base import Broker
+from market_data import get_finnhub_ma5
 
 def adjust_price_to_tick(price):
     """
@@ -95,7 +96,126 @@ def calculate_unit_amount(remaining_cash, T, splits):
     return remaining_cash / remaining_slots
 
 
-def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_type, seed=0, T=0.0, additional_loc_levels=3):
+REVERSE_EXIT_THRESHOLD = {
+    "TQQQ": 0.85,
+    "SOXL": 0.80,
+}
+
+_REVERSE_DIVISOR = {
+    20: 10,
+    40: 20,
+}
+
+_REVERSE_T_SELL_FACTOR = {
+    20: 0.9,
+    40: 0.95,
+}
+
+
+def _get_reverse_star_point(symbol, last_price, close_prices):
+    ma5 = get_finnhub_ma5(symbol)
+    if ma5 and ma5 > 0:
+        return ma5
+    if close_prices:
+        valid = [p for p in close_prices if isinstance(p, (int, float)) and p > 0]
+        if valid:
+            return sum(valid[-5:]) / len(valid[-5:])
+    return last_price
+
+
+def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
+                         position_qty, avg_price, orderable_cash, last_price,
+                         state):
+    rev = state.get("reverse_mode", {})
+    day_count = rev.get("day_count", 0) + 1
+    sell_proceeds = rev.get("cumulative_sell_proceeds", 0.0)
+    close_prices = state.get("close_prices", [])
+    T = float(state.get("T", 0.0))
+
+    divisor = _REVERSE_DIVISOR.get(splits, 20)
+    sell_factor = _REVERSE_T_SELL_FACTOR.get(splits, 0.95)
+
+    threshold = REVERSE_EXIT_THRESHOLD.get(symbol_type, 0.85)
+    exit_price = avg_price * threshold
+    if last_price > exit_price:
+        print(f"[리버스모드] {symbol} 종료 조건 충족 (종가 ${last_price:.2f} > ${exit_price:.2f})")
+        state["reverse_mode"] = {}
+        new_T = T
+        return {"orders": [], "new_T": new_T, "exit": True}
+
+    print(f"[리버스모드] {symbol} 진입 {day_count}일차 (T={T})")
+    is_first_day = (day_count == 1)
+    orders = []
+
+    if is_first_day:
+        sell_qty = max(1, position_qty // divisor)
+        if sell_qty > 0 and position_qty > 0:
+            orders.append({
+                "side": "SELL",
+                "quantity": sell_qty,
+                "price": last_price,
+                "order_type": "MOC",
+                "comment": f"리버스모드 {day_count}일차 MOC 매도 ({splits}분할 1/{divisor})",
+                "t_target": 0.0,
+            })
+            sell_proceeds += sell_qty * last_price
+        new_T = round(T * sell_factor, 4)
+        print(f"  → MOC 매도 {sell_qty}주, T: {T} → {new_T}")
+        day_count += 1
+    else:
+        star = _get_reverse_star_point(symbol, last_price, close_prices)
+        adjusted_star = adjust_price_to_tick(star)
+
+        sell_qty = max(1, position_qty // divisor)
+        if sell_qty > 0 and position_qty > 0:
+            orders.append({
+                "side": "SELL",
+                "quantity": sell_qty,
+                "price": adjusted_star,
+                "order_type": "LOC",
+                "comment": f"리버스모드 {day_count}일차 LOC 매도 @별지점",
+                "t_target": 0.0,
+            })
+            sell_proceeds += sell_qty * adjusted_star
+        new_T_sell = round(T * sell_factor, 4)
+
+        total_cash = max(orderable_cash, 0) + sell_proceeds
+        buy_amount = total_cash / 4
+        buy_qty = math.floor(buy_amount / adjusted_star) if adjusted_star > 0 else 0
+        if buy_qty > 0:
+            buy_price = adjust_price_to_tick(adjusted_star - 0.01)
+            orders.append({
+                "side": "BUY",
+                "quantity": buy_qty,
+                "price": buy_price,
+                "order_type": "LOC",
+                "comment": f"리버스모드 {day_count}일차 쿼터매수 (잔금/4)",
+                "t_target": 0.0,
+            })
+            new_T_buy = round(new_T_sell + (splits - new_T_sell) * 0.25, 4)
+            new_T = new_T_buy
+            print(f"  → LOC 매도 {sell_qty}주 @${adjusted_star}, LOC 매수 {buy_qty}주 @${buy_price}")
+            print(f"  → T: {T} → (매도{new_T_sell}) → (매수{new_T_buy}) → T={new_T}")
+        else:
+            new_T = new_T_sell
+            print(f"  → LOC 매도 {sell_qty}주 @${adjusted_star}, 매수 불가 (잔금 부족)")
+            print(f"  → T: {T} → {new_T}")
+
+        day_count += 1
+
+        if day_count > 5 and position_qty <= 0:
+            print(f"[리버스모드] {symbol} 전량 매도 완료 → 리버스모드 종료")
+            state["reverse_mode"] = {}
+            return {"orders": orders, "new_T": new_T, "exit": True}
+
+    state["reverse_mode"] = {
+        "day_count": day_count,
+        "cumulative_sell_proceeds": round(sell_proceeds, 2),
+    }
+    return {"orders": orders, "new_T": new_T, "exit": False}
+
+
+def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_type, seed=0, T=0.0, additional_loc_levels=3, state=None):
     """
     무한매수법 V4.0 전략을 실행합니다.
 
@@ -221,6 +341,36 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
     # ========================================
 
     if T >= splits:
+        if state is not None and position_qty > 0:
+            rev_result = execute_reverse_mode(
+                broker, symbol, exchange_code, splits, symbol_type,
+                position_qty, avg_price, orderable_cash, last_price,
+                state,
+            )
+            new_T = rev_result["new_T"]
+            rev_orders = rev_result["orders"]
+            if rev_result.get("exit"):
+                pass
+            print(f"[리버스모드] {symbol} 주문 {len(rev_orders)}건 생성")
+            return {
+                "symbol": symbol,
+                "exchange": exchange_code,
+                "tradable": tradable,
+                "open_price": open_price,
+                "last_price": last_price,
+                "position_qty": position_qty,
+                "avg_price": avg_price,
+                "orderable_cash": orderable_cash,
+                "seed": seed,
+                "remaining_seed": remaining_seed,
+                "T": new_T,
+                "unit_amount": 0.0,
+                "unit_qty": 0,
+                "star_point": None,
+                "star_buy_price": None,
+                "take_profit_price": None,
+                "orders": rev_orders,
+            }
         print(
             f"[경고] {symbol} T={T} → 분할 수({splits})를 모두 소진했습니다. "
             f"주문을 생성하지 않습니다."

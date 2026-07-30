@@ -40,6 +40,8 @@ def load_state(symbol):
             "orders_meta": {},
             "balance_mismatch": {},
             "state_version": "v2",
+            "close_prices": [],
+            "reverse_mode": {},
         }
 
     try:
@@ -61,6 +63,8 @@ def load_state(symbol):
             "orders_meta": {},
             "balance_mismatch": {},
             "state_version": "v2",
+            "close_prices": [],
+            "reverse_mode": {},
         }
 
     state = all_states[symbol]
@@ -73,6 +77,8 @@ def load_state(symbol):
     orders_meta = state.get("orders_meta", {})
     balance_mismatch = state.get("balance_mismatch", {})
     state_version = state.get("state_version", "v1")
+    close_prices = state.get("close_prices", [])
+    reverse_mode = state.get("reverse_mode", {})
 
     print(f"[상태] {symbol} 상태 로드 완료 → T={T}, 마지막 갱신: {last_updated}")
     return {
@@ -85,6 +91,8 @@ def load_state(symbol):
         "orders_meta": orders_meta,
         "balance_mismatch": balance_mismatch,
         "state_version": state_version,
+        "close_prices": close_prices,
+        "reverse_mode": reverse_mode,
     }
 
 
@@ -128,6 +136,8 @@ def save_state(symbol, state_dict):
         "orders_meta": state_dict.get("orders_meta", {}),
         "balance_mismatch": state_dict.get("balance_mismatch", {}),
         "state_version": state_dict.get("state_version", "v2"),
+        "close_prices": state_dict.get("close_prices", []),
+        "reverse_mode": state_dict.get("reverse_mode", {}),
     }
 
     with open(_STATE_FILE, "w", encoding="utf-8") as f:
