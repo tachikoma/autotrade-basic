@@ -124,6 +124,7 @@ uv run pytest tests/ -v
   - `FORCE_T_REINFERENCE=true`: `last_updated` 초기화 → 전체 이력(90일)에서 T 재추정 (LIVE→DRY 자동 전환)
   - `{SYMBOL}_FORCE_T={value}`: state.json의 T를 강제 덮어쓰기 (orders_meta/balance_mismatch 초기화)
   - `{SYMBOL}_MAX_T={value}`: T 자동추정 결과의 상한선 (기본값: `{SYMBOL}_SPLITS - 1`, 분할수 초과 방지)
+  - FORCE_T_REINFERENCE 실행 시 small_seed_days(소액 시드 오추정)가 감지되면 포지션 기반 T 추정값이 함께 출력되며, 해당 값을 `{SYMBOL}_FORCE_T`로 설정하여 직접 보정 가능
 - **리버스모드** (`src/strategy.py execute_reverse_mode()`):
   - 발동: `T >= splits` + position > 0
   - 1일차: MOC 매도 (보유량 1/10(20분할) or 1/20(40분할)) → T × 0.9/0.95
