@@ -268,6 +268,16 @@ def run_one_symbol(broker: Broker, symbol_config):
 
     state = update_T_from_history(symbol, state, order_history, balance_qty=live_qty)
 
+    # ── 포지션 기반 T 추정 진단 (소액 시드 오추정 시 참고용) ──
+    infer_diag = state.get("_inference_diagnostic", {})
+    if infer_diag.get("small_seed_days", 0) > 0 and live_qty is not None and live_avg is not None and live_qty > 0 and live_avg > 0:
+        _used_seed = state.get("effective_seed", 0.0) or seed
+        if _used_seed > 0:
+            T_position = round((live_qty * live_avg * splits) / _used_seed, 4)
+            T_position = min(T_position, max_t if max_t is not None else splits - 1)
+            print(f"  → [참고] 포지션 기반 T 추정: {T_position}")
+            print(f"  → 포지션 기반 값으로 설정하려면 {symbol}_FORCE_T={T_position} 환경변수를 추가하고 재실행하세요")
+
     # ── T값 상한 적용 (MAX_T) ──
     if max_t is not None and state["T"] > max_t:
         print(f"[T 보정] {symbol} T={state['T']} > MAX_T={max_t} → T={max_t}로 조정")
