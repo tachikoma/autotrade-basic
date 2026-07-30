@@ -211,10 +211,15 @@ def run_one_symbol(broker: Broker, symbol_config):
     force_t = symbol_config.get("force_t")
     max_t = symbol_config.get("max_t")
 
-    from config import FORCE_T_REINFERENCE as _force_reinference
-    if _force_reinference and state.get("last_updated"):
-        print(f"[T 보정] FORCE_T_REINFERENCE=true → last_updated 초기화 (전체 이력 재추정)")
-        state["last_updated"] = ""
+    from config import FORCE_T_REINFERENCE as _force_reinference, TRADE_MODE as _trade_mode
+    if _force_reinference:
+        if _trade_mode == "LIVE":
+            print("[T 보정] FORCE_T_REINFERENCE=true 이지만 TRADE_MODE=LIVE입니다 — 주문 방지를 위해 DRY로 전환합니다.")
+            import config as _cfg
+            _cfg.TRADE_MODE = "DRY"
+        if state.get("last_updated"):
+            print(f"[T 보정] FORCE_T_REINFERENCE=true → last_updated 초기화 (전체 이력 재추정)")
+            state["last_updated"] = ""
 
     # 주문 이력 조회 기간을 상황에 맞게 계산합니다
     cycle_start_date = state.get("cycle_start_date", "")
