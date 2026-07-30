@@ -34,6 +34,7 @@ from broker.kis.order_types import (
     get_reservation_tr_id,
     TR_ID_PRICE_DETAIL,
     TR_ID_QUOTATION,
+    TR_ID_DAILY_CLOSE,
     TR_ID_BALANCE,
     TR_ID_PURCHASE_AMOUNT,
     TR_ID_ORDER_HISTORY,
@@ -532,6 +533,57 @@ class KISBroker(Broker):
 
         except requests.exceptions.RequestException as e:
             raise BrokerError(f"주문체결내역 조회 실패: {str(e)}")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # 일봉 종가
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def get_daily_closes(self, symbol: str, exchange: str, days: int = 5) -> list[float]:
+        """
+        해외주식 일자별종가를 조회합니다 → list[float] (오래된 순).
+
+        TR: HHDFS76240000 (해외주식 일자별종가)
+        """
+        access_token = self._get_token()
+
+        path = "/uapi/overseas-price/v1/quotations/dailyprice"
+        headers = {
+            "authorization": f"Bearer {access_token}",
+            "tr_id": TR_ID_DAILY_CLOSE,
+        }
+        params = {
+            "AUTH": "",
+            "EXCD": exchange,
+            "SYMB": symbol,
+            "GUBN": "0",
+        }
+
+        try:
+            response = self._request_with_rate_retry(
+                "GET", path, headers=headers, params=params
+            )
+            response.raise_for_status()
+            response_data = response.json()
+
+            if response_data.get("rt_cd") != "0":
+                msg = response_data.get("msg1", "알 수 없는 에러")
+                raise BrokerError(f"일자별종가 조회 실패: {msg}")
+
+            output = response_data.get("output", [])
+            closes = []
+            for item in output:
+                try:
+                    close = float(item.get("clos", "0"))
+                    if close > 0:
+                        closes.append(close)
+                except (ValueError, TypeError):
+                    continue
+
+            closes.reverse()
+            return closes[-days:]
+
+        except requests.exceptions.RequestException as e:
+            raise BrokerError(f"일자별종가 조회 실패: {str(e)}")
 
     # ═══════════════════════════════════════════════════════════════════════
     # 주문 API

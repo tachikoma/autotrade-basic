@@ -9,6 +9,7 @@ KIS Open API 호출, 무한매수법 V4 전략 로직, 상태 관리 등 자동�
 | 전략 이해/수정 | strategy.py | `무한매수법_V4()` — 별지점, 전/후반전, 추가매수 LOC |
 | 브로커 구현 | broker/{kis,kiwoom,ls,toss}/ | 각 브로커별 API 어댑터 |
 | 공통 인터페이스 | broker/base.py | `Broker`, `OrderResult`, `BrokerError` |
+| 일봉 종가 조회 | broker/base.py `get_daily_closes()` | TR: KIS=HHDFS76240000, LS=g3204, KIWOOM=usa06012, TOSS=GET /api/v1/candles |
 | state.json I/O | state.py | `load_state()`, `save_state()`, `update_T_from_history()` |
 | 설정 파싱 | config.py | `_parse_symbols()` — SYMBOLS 환경변수 → 종목 설정 dict |
 | Telegram 발송 | telegram.py | `send_telegram()` — 텔레그램 봇 API 호출 |

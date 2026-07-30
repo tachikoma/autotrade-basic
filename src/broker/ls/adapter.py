@@ -46,6 +46,7 @@ from broker.ls.order_types import (
     TR_ID_BALANCE,
     TR_ID_ORDER_HISTORY,
     TR_ID_ORDER,
+    TR_ID_DAILY_CLOSE,
 )
 from config import BROKER_MODE, BROKER_CONFIG, HTTP_TIMEOUT, FINNHUB_API_KEY, LS_DEMO_BYPASS_BUGS
 
@@ -160,6 +161,105 @@ class LSBroker(Broker):
     def is_trading_day(self) -> bool:
         """오늘이 미국 증시 영업일인지 확인합니다 (NYSE 기준)."""
         return is_us_trading_day()
+
+    # ══════════════════════════════════════════════════════════════════
+    # 일봉 종가
+    # ══════════════════════════════════════════════════════════════════
+
+    def get_daily_closes(self, symbol: str, exchange: str, days: int = 5) -> list[float]:
+        """
+        해외주식 일별주가를 조회합니다 → list[float] (오래된 순).
+
+        1차: LS g3204 TR
+        2차: Finnhub candle API fallback
+        """
+        try:
+            return self._get_daily_closes_ls(symbol, exchange, days)
+        except BrokerError:
+            pass
+
+        if FINNHUB_API_KEY:
+            try:
+                return self._get_daily_closes_finnhub(symbol, days)
+            except BrokerError as e:
+                print(f"[Finnhub Fallback] 일별종가 조회 실패: {e}")
+
+        raise BrokerError(f"일별종가 조회 실패: LS g3204 및 Finnhub 모두 실패")
+
+    def _get_daily_closes_ls(self, symbol: str, exchange: str, days: int = 5) -> list[float]:
+        """LS g3204 TR로 일별주가 조회."""
+        ls_exch, _ = convert_exchange_code(exchange)
+        keysymbol = build_symbol(symbol, ls_exch)
+
+        end_date = get_kst_now()
+        start_date = end_date - timedelta(days=days * 2 + 5)
+
+        body = {
+            "g3204InBlock": {
+                "keysymbol": keysymbol,
+                "exchcd": ls_exch,
+                "symbol": symbol.upper(),
+                "gubun": "0",
+                "sdate": start_date.strftime("%Y%m%d"),
+                "edate": end_date.strftime("%Y%m%d"),
+            }
+        }
+
+        try:
+            resp = self._post("/overseas-stock/market-data", tr_id=TR_ID_DAILY_CLOSE, body=body)
+            data = resp.json()
+
+            rsp_cd = data.get("rsp_cd", "")
+            if rsp_cd != "00000":
+                raise BrokerError(f"일별주가 조회 실패: {data.get('rsp_msg', '')}")
+
+            output = data.get("g3204OutBlock1", [])
+            closes = []
+            for item in output:
+                try:
+                    close = float(item.get("clos", "0"))
+                    if close > 0:
+                        closes.append(close)
+                except (ValueError, TypeError):
+                    continue
+
+            # KIS/Kiwoom과 동일하게 LS g3204도 최신순 반환 가정 → 역순
+            closes.reverse()
+            return closes[-days:]
+
+        except requests.exceptions.RequestException as e:
+            raise BrokerError(f"일별주가 조회 실패 (네트워크): {str(e)}")
+
+    def _get_daily_closes_finnhub(self, symbol: str, days: int = 5) -> list[float]:
+        """Finnhub candle API로 일봉 종가 조회 (fallback)."""
+        now = int(time.time())
+        from_ts = now - (days * 2 + 5) * 86400
+
+        url = "https://finnhub.io/api/v1/stock/candle"
+        params = {
+            "symbol": symbol.upper(),
+            "resolution": "D",
+            "from": from_ts,
+            "to": now,
+            "token": FINNHUB_API_KEY,
+        }
+
+        try:
+            resp = self._session.get(url, params=params, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+
+            if data.get("s") != "ok":
+                raise BrokerError(f"Finnhub candle s!=ok: {symbol}")
+
+            closes = [float(c) for c in data.get("c", []) if isinstance(c, (int, float)) and c > 0]
+            if not closes:
+                raise BrokerError(f"Finnhub 유효한 종가 없음: {symbol}")
+
+            return closes[-days:]
+
+        except requests.exceptions.RequestException as e:
+            raise BrokerError(f"Finnhub API 호출 실패 ({symbol}): {e}")
 
     # ══════════════════════════════════════════════════════════════════
     # 조회 API

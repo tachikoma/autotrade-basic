@@ -316,6 +316,39 @@ class TossBroker(Broker):
         except requests.exceptions.RequestException as e:
             raise BrokerError(f"호가 조회 실패: {str(e)}")
 
+    def get_daily_closes(self, symbol: str, exchange: str, days: int = 5) -> list[float]:
+        """
+        해외주식 일봉 종가를 조회합니다 → list[float] (오래된 순).
+
+        토스 API: GET /api/v1/candles?symbol={ticker}&interval=1d&count=N
+        """
+        token = self._get_token()
+        ticker = symbol.upper()
+
+        try:
+            data = self._request_with_rate_retry(
+                "GET", "/api/v1/candles", token,
+                params={"symbol": ticker, "interval": "1d", "count": days},
+            )
+            result = data.get("result", {})
+            candles = result.get("candles", [])
+
+            closes = []
+            for c in reversed(candles):
+                try:
+                    price = float(c.get("closePrice", 0))
+                    if price > 0:
+                        closes.append(price)
+                except (ValueError, TypeError):
+                    continue
+
+            return closes[-days:]
+
+        except BrokerError:
+            raise
+        except requests.exceptions.RequestException as e:
+            raise BrokerError(f"일봉 종가 조회 실패: {str(e)}")
+
     def get_balance(self, symbol: str, exchange: str) -> Optional[Balance]:
         """
         해외주식 보유 잔고를 조회합니다 → Balance(quantity, avg_price).

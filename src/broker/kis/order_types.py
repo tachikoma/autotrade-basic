@@ -38,6 +38,7 @@ def get_ord_dvsn(order_type: str) -> str:
 # 조회 API TR_ID
 TR_ID_PRICE_DETAIL = "HHDFS76200200"       # 해외주식 현재가상세
 TR_ID_QUOTATION = "HHDFS00000300"          # 해외주식 현재체결가
+TR_ID_DAILY_CLOSE = "HHDFS76240000"        # 해외주식 일자별종가
 
 # 실전/모의 분기 TR_ID (real, demo)
 TR_ID_BALANCE = ("TTTS3012R", "VTTS3012R")          # 잔고

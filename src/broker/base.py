@@ -136,6 +136,26 @@ class Broker(ABC):
         """
         pass
 
+    # ── 일봉 종가 ──────────────────────────────────────────────────────
+
+    @abstractmethod
+    def get_daily_closes(self, symbol: str, exchange: str, days: int = 5) -> list[float]:
+        """
+        최근 N거래일 일봉 종가를 조회합니다 → list[float] (오래된 순).
+
+        Parameters:
+            symbol (str): 종목 코드 (예: "TQQQ")
+            exchange (str): 거래소 코드 (예: "NAS")
+            days (int): 조회할 거래일 수 (기본 5)
+
+        Returns:
+            list[float]: 종가 리스트, 오래된 순. days보다 적을 수 있습니다.
+
+        Raises:
+            BrokerError: API 호출 실패 시
+        """
+        pass
+
     # ── 주문 API (trading_bot.py가 호출) ───────────────────────────────
 
     @abstractmethod
@@ -216,6 +236,12 @@ class DryBroker(Broker):
         days: int = 30, verbose: bool = False, limit: int = 100,
     ) -> list[dict]:
         return self._real.get_order_history(symbol, exchange, days, verbose, limit)
+
+    # ── 일봉 종가: 실제 브로커에 위임 ──
+    def get_daily_closes(
+        self, symbol: str, exchange: str, days: int = 5,
+    ) -> list[float]:
+        return self._real.get_daily_closes(symbol, exchange, days)
 
     # ── 주문 API: 로그만 출력 ──
     def place_order(

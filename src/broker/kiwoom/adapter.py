@@ -46,6 +46,7 @@ from broker.kiwoom.tr_registry import (
     TR_DEPOSIT,
     TR_BUY,
     TR_SELL,
+    TR_CHART_DAILY,
 )
 
 
@@ -381,6 +382,37 @@ class KiwoomBroker(Broker):
             )
         except requests.exceptions.RequestException as e:
             raise BrokerError(f"호가 조회 실패: {str(e)}")
+
+    def get_daily_closes(self, symbol: str, exchange: str, days: int = 5) -> list[float]:
+        """
+        해외주식 일봉 종가를 조회합니다 → list[float] (오래된 순).
+
+        TR: usa06012 (일 차트)
+        """
+        token = self._get_token()
+        api_exch = get_api_exchange_code(exchange)
+
+        body = {
+            "stk_cd": symbol.upper(),
+            "stex_tp": api_exch,
+            "strt_dt": "",
+        }
+
+        try:
+            data = self._request_with_rate_retry(TR_CHART_DAILY, body, token)
+            items = data.get("result_list", data.get("output", []))
+
+            closes = []
+            for item in items:
+                price = _parse_price(item.get("cur_prc"))
+                if price > 0:
+                    closes.append(price)
+
+            closes.reverse()
+            return closes[-days:]
+
+        except requests.exceptions.RequestException as e:
+            raise BrokerError(f"일봉 종가 조회 실패: {str(e)}")
 
     def get_balance(self, symbol: str, exchange: str) -> Optional[Balance]:
         """

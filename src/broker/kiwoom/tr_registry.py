@@ -35,6 +35,9 @@ _REGISTRY: dict[str, TrEndpoint] = {
     # 시세 — /api/us/mrkcond
     "usa20100": TrEndpoint("POST", "/api/us/mrkcond"), # 현재가
     "usa20101": TrEndpoint("POST", "/api/us/mrkcond"), # 10호가
+
+    # 차트 — /api/us/chart
+    "usa06012": TrEndpoint("POST", "/api/us/chart"),   # 일 차트
 }
 
 
@@ -57,3 +60,4 @@ TR_HISTORY_DEMO  = "ust21150"   # 일별 주문체결내역 (모의투자용 —
 TR_DEPOSIT       = "ust21110"
 TR_PRICE     = "usa20100"
 TR_ORDERBOOK = "usa20101"
+TR_CHART_DAILY = "usa06012"

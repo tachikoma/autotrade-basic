@@ -34,7 +34,8 @@ autotrade-basic/
 |------|----------|-------|
 | 전략 로직 이해 | src/strategy.py | `무한매수법_V4()`, T값/별지점 계산, `execute_reverse_mode()` |
 | 브로커 구현 | src/broker/{kis,kiwoom,ls,toss}/ | 각 브로커별 API 어댑터 |
-| 공통 인터페이스 | src/broker/base.py | `Broker`, `OrderResult`, `BrokerError` |
+| 공통 인터페이스 | src/broker/base.py | `Broker`, `OrderResult`, `BrokerError`, `get_daily_closes()` |
+| 일봉 종가 조회 | src/broker/base.py `get_daily_closes()` | TR: KIS=HHDFS76240000, LS=g3204, KIWOOM=usa06012, TOSS=GET /api/v1/candles |
 | 상태 파일 관리 | src/state.py | state.json 로드/저장, T 갱신, reverse_mode 상태 |
 | 환경변수 설정 | src/config.py | 종목 설정, 모드, 수수료, T 보정 env var |
 | 시세 데이터 | src/market_data.py | Finnhub 5일 이동평균 조회 |
@@ -131,3 +132,10 @@ uv run pytest tests/ -v
   - 종료 조건: 종가 > 평단×(1-0.15)(TQQQ) or ×(1-0.20)(SOXL)
   - 별지점: Finnhub 5일 MA → close_prices(state) → last_price fallback
 - **close_prices**: state.json에 최근 5거래일 종가 저장 (Finnhub fallback용)
+- **`get_daily_closes()`** (`src/broker/base.py`):
+  - Broker 추상 메서드: `(symbol, exchange, days=5) → list[float]` (오래된 종가순)
+  - KIS: HHDFS76240000 → `GET /uapi/overseas-price/v1/quotations/dailyprice` (최신순 → 역순)
+  - LS: g3204 → `POST /overseas-stock/market-data` (최신순 → 역순) + Finnhub candle fallback
+  - KIWOOM: usa06012 → `POST /api/us/chart` (최신순 → 역순)
+  - TOSS: `GET /api/v1/candles?interval=1d` (최신순 → `reversed()`)
+  - 리버스모드 `_get_reverse_star_point()`에서 close_prices 보강용으로 사용 가능
