@@ -17,7 +17,7 @@ sys.path.append("src")
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from config import SYMBOLS, TRADE_MODE, COMMISSION_RATE, REINVEST, BROKER_MODE, LS_DEMO_BYPASS_BUGS
+from config import SYMBOLS, TRADE_MODE, COMMISSION_RATE, REINVEST, BROKER_MODE, LS_DEMO_BYPASS_BUGS, ORDER_HISTORY_VERBOSE
 from broker import create_broker
 from broker.base import Broker, OrderResult
 from broker.market_utils import get_kst_now, is_us_dst, is_us_trading_day
@@ -240,12 +240,12 @@ def run_one_symbol(broker: Broker, symbol_config):
     else:
         history_days = 30
 
-    # DRY 모드이면 사람이 읽기 쉬운 주문 이력 요약을 로그에 출력합니다.
+    # DRY 모드 또는 ORDER_HISTORY_VERBOSE=true 시 주문 이력 요약을 로그에 출력합니다.
     order_history = broker.get_order_history(
         symbol,
         exchange,
         days=history_days,
-        verbose=(TRADE_MODE == "DRY"),
+        verbose=(TRADE_MODE == "DRY" or ORDER_HISTORY_VERBOSE),
     )
 
     # 잔고를 미리 조회하여 update_T_from_history의 잔고 교차 검증에 사용합니다.

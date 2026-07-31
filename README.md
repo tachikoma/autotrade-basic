@@ -159,6 +159,7 @@ TRADE_MODE=LIVE uv run python trading_bot.py
 | `BROKER` | `kis` / `kiwoom` / `ls` / `toss` | 증권사 선택. 기본값 `kis`. (하위호환: `KIS_MODE`도 폴백 지원) |
 | `BROKER_MODE` | `real` / `demo` | API 환경 선택(실전/모의). 기본값 `demo`. (하위호환: `KIS_MODE`도 폴백 지원) |
 | `TRADE_MODE` | `LIVE` / `DRY` | 실제 주문 실행 여부. `DRY`는 주문 정보만 출력합니다. |
+| `ORDER_HISTORY_VERBOSE` | `true` / `false` | LIVE 모드에서도 `[주문이력 요약]` 상세 출력. 기본값 `false`. DRY는 항상 출력. |
 
 > **하위호환**: `BROKER_MODE` 대신 기존 `KIS_MODE`를 사용해도 작동합니다 (`config.py`가 폴백).
 
@@ -180,6 +181,7 @@ KIS_ACCOUNT_NO=12345678
 
 # 거래 설정
 TRADE_MODE=DRY                  # DRY 또는 LIVE
+ORDER_HISTORY_VERBOSE=false     # true 시 LIVE에서도 주문이력 상세 출력
 SYMBOLS=TQQQ:NAS,SOXL:AMS       # 브로커별 거래소 코드 주의 (아래 참고)
 TQQQ_SPLITS=40
 TQQQ_SYMBOL_TYPE=TQQQ
@@ -276,6 +278,7 @@ demo/real × 브로커별로 **7개의 Environment**를 생성합니다. 각 Env
 |----------|---------------------|---------------------------|-------------------|------|
 | `SYMBOLS` | `TQQQ:NAS,SOXL:AMS` | `TQQQ:NAS,SOXL:NYS` | `TQQQ:NAS,SOXL:AMS` | 거래 종목 목록 (거래소 코드 주의) |
 | `TRADE_MODE` | `DRY` (demo) / `LIVE` (real) | `DRY` (demo) / `LIVE` (real) | `DRY` (demo) / `LIVE` (real) | 기본 거래 모드 |
+| `ORDER_HISTORY_VERBOSE` | `true` / `false` | `true` / `false` | `true` / `false` | LIVE에서도 주문이력 상세 출력 (기본 `false`) |
 | `TQQQ_SPLITS` | `40` | `40` | `40` | TQQQ 분할 수 |
 | `TQQQ_SYMBOL_TYPE` | `TQQQ` | `TQQQ` | `TQQQ` | TQQQ 별지점 공식 타입 |
 | `TQQQ_SEED` | `10000` | `10000` | `10000` | TQQQ 시드 금액 |

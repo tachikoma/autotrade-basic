@@ -248,6 +248,12 @@ FORCE_T_REINFERENCE = os.getenv("FORCE_T_REINFERENCE", "").strip().lower() == "t
 # Free tier: 60 calls/min, 실시간 US 시세, 개인용 무료
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
 
+# 주문이력 상세 출력 여부
+# true: LIVE 모드에서도 주문 이력 요약([주문이력 요약] 섹션)을 출력합니다.
+# DRY 모드는 항상 출력합니다.
+# .env 예: ORDER_HISTORY_VERBOSE=true
+ORDER_HISTORY_VERBOSE = os.getenv("ORDER_HISTORY_VERBOSE", "false").strip().lower() == "true"
+
 # LS 모의투자 API 버그 우회 플래그
 # LS 모의투자 환경에서는 다음 API 문제가 발생합니다:
 #   1. COSOQ00201(잔고조회): IGW40014 서버 고정폭 변환 오류
