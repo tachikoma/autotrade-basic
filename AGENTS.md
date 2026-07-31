@@ -1,7 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-06-25
-**Updated:** 2026-07-30
+**Updated:** 2026-07-31
 **Branch:** `develop`
 
 ## OVERVIEW
@@ -75,7 +75,7 @@ autotrade-basic/
 - 모의/실전 TR_ID를 KIS_MODE에 따라 동적 전환
 - DRY 모드에서는 주문 출력만 하고 실행하지 않음
 - 리버스모드(`execute_reverse_mode()`): T≥분할수 시 발동, 5일 MA 별지점 기반 무한매도+쿼터매수
-- T값 환경변수 보정: `FORCE_T_REINFERENCE`, `{SYMBOL}_FORCE_T`, `{SYMBOL}_MAX_T`
+- T값 환경변수 보정: `FORCE_T_REINFERENCE`, `{SYMBOL}_FORCE_T`, `{SYMBOL}_MAX_T` (기본 MAX_T=분할수, 리버스모드 진입용 `T=splits` 허용)
 
 ## COMMANDS
 ```bash
@@ -91,10 +91,10 @@ TRADE_MODE=LIVE uv run python trading_bot.py
 # T값 보정: 전체 이력 재추정 (DRY 자동 전환)
 FORCE_T_REINFERENCE=true uv run python trading_bot.py
 
-# T값 강제 설정 (1회성)
-TQQQ_FORCE_T=29 SOXL_FORCE_T=19 TRADE_MODE=DRY uv run python trading_bot.py
+# T값 강제 설정 (1회성 — 보정 RUN 후 env var 즉시 삭제)
+TQQQ_FORCE_T=29 SOXL_FORCE_T=20 TRADE_MODE=DRY uv run python trading_bot.py
 
-# T값 상한 설정 (재추정 시 분할수 초과 방지)
+# T값 상한 설정 (재추정 시 상한 제한, 기본값은 분할수)
 SOXL_MAX_T=19 FORCE_T_REINFERENCE=true uv run python trading_bot.py
 
 # 테스트 실행
@@ -123,9 +123,11 @@ uv run pytest tests/ -v
 - **ORDER_HISTORY_VERBOSE=true**: LIVE 모드에서도 `[주문이력 요약]` 상세 출력 (DRY는 항상 출력). KIS/KIWOOM/LS/TOSS 공통
 - **T 보정 환경변수**:
   - `FORCE_T_REINFERENCE=true`: `last_updated` 초기화 → 전체 이력(90일)에서 T 재추정 (LIVE→DRY 자동 전환)
-  - `{SYMBOL}_FORCE_T={value}`: state.json의 T를 강제 덮어쓰기 (orders_meta/balance_mismatch 초기화)
-  - `{SYMBOL}_MAX_T={value}`: T 자동추정 결과의 상한선 (기본값: `{SYMBOL}_SPLITS - 1`, 분할수 초과 방지)
+  - `{SYMBOL}_FORCE_T={value}`: state.json의 T를 강제 덮어쓰기 (orders_meta/balance_mismatch 초기화, `last_updated`/`last_processed_ordno`를 이력 최신 주문 시각으로 갱신 → 이중 가산 방지, `FORCE_T=0`이면 `cycle_start_date` 초기화)
+  - `{SYMBOL}_MAX_T={value}`: T 자동추정 결과의 상한선 (기본값: `{SYMBOL}_SPLITS` — 리버스모드 진입 위해 `T=splits` 허용, 초과만 방지)
   - FORCE_T_REINFERENCE 실행 시 small_seed_days(소액 시드 오추정)가 감지되면 포지션 기반 T 추정값이 함께 출력되며, 해당 값을 `{SYMBOL}_FORCE_T`로 설정하여 직접 보정 가능
+  - ⚠️ `{SYMBOL}_FORCE_T`는 **1회성 점화용**입니다. 보정 RUN 1회 실행 후 env var를 **즉시 삭제**하세요. 리버스모드 진행은 `day_count`(state `reverse_mode`)와 체결 이력 기반 T 갱신이 주도하므로 FORCE_T 불필요. 유지하면 리버스모드 종료 → 새 사이클(T=0)에서 T를 다시 `splits`로 강제해 **새 사이클 매수가 영구 차단**됩니다.
+  - ⚠️ GH Actions 캐시는 **브랜치별 격리**입니다. `develop` 수동 RUN에서 보정해도 `main`(repository_dispatch) RUN의 캐시에는 반영되지 않습니다. T 보정은 반드시 운영 브랜치(`main`)에서 실행하세요.
 - **리버스모드** (`src/strategy.py execute_reverse_mode()`):
   - 발동: `T >= splits` + position > 0
   - 1일차: MOC 매도 (보유량 1/10(20분할) or 1/20(40분할)) → T × 0.9/0.95

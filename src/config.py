@@ -201,8 +201,8 @@ def _parse_symbols():
 			# T값 강제 설정 (환경변수, 1회성 보정)
 			# {SYMBOL}_FORCE_T: 설정 시 state.json의 T를 이 값으로 덮어씁니다
 			"force_t": float(force_t) if force_t else None,
-			# {SYMBOL}_MAX_T: T 자동추정 결과의 상한선 (기본값: splits-1)
-			"max_t": float(max_t_raw) if max_t_raw else splits - 1,
+			# {SYMBOL}_MAX_T: T 자동추정 결과의 상한선 (기본값: splits — 리버스모드 진입 위해 T=splits 허용)
+			"max_t": float(max_t_raw) if max_t_raw else splits,
 		})
 
 	return result

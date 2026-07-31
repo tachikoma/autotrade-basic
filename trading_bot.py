@@ -274,7 +274,7 @@ def run_one_symbol(broker: Broker, symbol_config):
         _used_seed = state.get("effective_seed", 0.0) or seed
         if _used_seed > 0:
             T_position = round((live_qty * live_avg * splits) / _used_seed, 4)
-            T_position = min(T_position, max_t if max_t is not None else splits - 1)
+            T_position = min(T_position, max_t if max_t is not None else splits)
             print(f"  → [참고] 포지션 기반 T 추정: {T_position}")
             print(f"  → 포지션 기반 값으로 설정하려면 {symbol}_FORCE_T={T_position} 환경변수를 추가하고 재실행하세요")
 
@@ -391,7 +391,28 @@ def run_one_symbol(broker: Broker, symbol_config):
         state.pop("balance_mismatch", None)
         state["orders_meta"] = {}
         state["additional_loc_odno"] = []
-        print(f"[T 보정] {symbol} FORCE_T={force_t} 적용 (이전 T={old_T}), orders_meta/balance_mismatch 초기화")
+        # FORCE_T 이후 이력 조회가 stale last_updated 기준으로 이미 반영된 주문을
+        # 다시 가산(이중 가산)하는 것을 방지하기 위해, 이번 RUN에서 조회된 최신
+        # 주문 시각으로 last_updated를 갱신합니다. 이력이 없으면 현재 UTC를 사용합니다.
+        latest_ord_dt = ""
+        for o in order_history:
+            odt = o.get("ord_datetime_utc", "")
+            if odt and odt > latest_ord_dt:
+                latest_ord_dt = odt
+        if latest_ord_dt:
+            state["last_updated"] = latest_ord_dt
+            latest_order = next(
+                o for o in order_history
+                if o.get("ord_datetime_utc") == latest_ord_dt
+            )
+            state["last_processed_ordno"] = latest_order.get("odno", "")
+        else:
+            state["last_updated"] = datetime.now(ZoneInfo("UTC")).isoformat()
+            state["last_processed_ordno"] = ""
+        if force_t == 0:
+            state["cycle_start_date"] = ""
+        print(f"[T 보정] {symbol} FORCE_T={force_t} 적용 (이전 T={old_T}), "
+              f"orders_meta/balance_mismatch 초기화, last_updated 갱신")
         save_state(symbol, state)
 
     T = state["T"]
