@@ -185,6 +185,9 @@ jobs:
           # ls-demo 환경에서 기본값 true, 나머지는 false
           LS_DEMO_BYPASS_BUGS: ${{ vars.LS_DEMO_BYPASS_BUGS || (inputs.broker == 'ls' && inputs.broker_mode == 'demo' && 'true') || 'false' }}
 
+          # 주문이력 상세 출력 (true: LIVE 모드에서도 [주문이력 요약] 출력, 기본 false)
+          ORDER_HISTORY_VERBOSE: ${{ vars.ORDER_HISTORY_VERBOSE || 'false' }}
+
           # API 연결 타임아웃 (초 단위, 기본값 30초)
           CONNECT_TIMEOUT: 30
 
