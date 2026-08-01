@@ -9,8 +9,10 @@
 프로그램 실행 중 발생하는 모든 에러는 catch되어 출력됩니다.
 """
 
+import os
 import sys
 import time
+from copy import deepcopy
 
 sys.path.append("src")
 
@@ -24,6 +26,9 @@ from broker.market_utils import get_kst_now, is_us_dst, is_us_trading_day
 from strategy import 무한매수법_V4, adjust_price_to_tick
 from state import load_state, save_state, update_T_from_history, compute_position_from_history, register_order_meta_in_state
 from notifier import notify
+
+
+STATE_DIAGNOSTIC_ONLY = os.getenv("STATE_DIAGNOSTIC_ONLY", "").strip().lower() == "true"
 
 
 def generate_cycle_report(symbol, order_history, state, seed, commission_rate):
@@ -480,6 +485,10 @@ def run_one_symbol(broker: Broker, symbol_config):
     # ── Step 2: 전략 실행 ───────────────────────────────────────
     print("\n[Step 2] 전략 실행 중...")
 
+    # DRY 모드는 주문뿐 아니라 리버스모드 진행일/누적값도 시뮬레이션해야
+    # 실제 캐시 상태를 오염시키지 않습니다.
+    strategy_state = deepcopy(state) if TRADE_MODE == "DRY" else state
+
     strategy_result = 무한매수법_V4(
         broker,
         symbol=symbol,
@@ -489,7 +498,7 @@ def run_one_symbol(broker: Broker, symbol_config):
         seed=seed,
         T=T,
         additional_loc_levels=additional_loc_levels,
-        state=state,
+        state=strategy_state,
     )
 
     last_price = strategy_result['last_price']
@@ -690,6 +699,24 @@ def run_one_symbol(broker: Broker, symbol_config):
             print(f"  ✗ {order['comment']}: {order['error']}")
 
 
+def _print_state_diagnostic():
+    """캐시 상태만 출력하고 브로커/API를 건드리지 않습니다."""
+    print("\n[상태 진단 모드] API/전략/주문을 실행하지 않습니다.")
+    for symbol_config in SYMBOLS:
+        symbol = symbol_config["symbol"]
+        state = load_state(symbol)
+        reverse_mode = state.get("reverse_mode") or {}
+        print(
+            f"[상태 진단] {symbol} → "
+            f"T={state.get('T', 0.0)}, "
+            f"day_count={reverse_mode.get('day_count', 0)}, "
+            f"cumulative_sell_proceeds=${reverse_mode.get('cumulative_sell_proceeds', 0.0):.2f}, "
+            f"last_updated={state.get('last_updated', '')}, "
+            f"last_processed_ordno={state.get('last_processed_ordno', '')}"
+        )
+    print("[상태 진단] 종료합니다. 상태 파일은 변경하지 않았습니다.")
+
+
 def main():
     """
     자동매매 봇의 메인 실행 함수입니다.
@@ -697,6 +724,10 @@ def main():
     SYMBOLS 설정에 있는 종목을 순서대로 처리합니다.
     한 종목이 실패해도 나머지 종목은 계속 처리됩니다.
     """
+    if STATE_DIAGNOSTIC_ONLY:
+        _print_state_diagnostic()
+        return
+
     broker = create_broker()
     try:
         # stdout 버퍼링 해제: GitHub Actions 또는 로컬에서 출력이 한꺼번에 나오지 않고

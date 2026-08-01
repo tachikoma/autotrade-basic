@@ -1,7 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-06-25
-**Updated:** 2026-07-31
+**Updated:** 2026-08-01
 **Branch:** `develop`
 
 ## OVERVIEW
@@ -73,7 +73,7 @@ autotrade-basic/
 - 유니코드 함수명 `무한매수법_V4()` — 전략 함수만 한글명
 - T값(float)이 누적 매수 횟수를 나타내는 독특한 상태 관리
 - 모의/실전 TR_ID를 KIS_MODE에 따라 동적 전환
-- DRY 모드에서는 주문 출력만 하고 실행하지 않음
+- DRY 모드에서는 주문 출력만 하고 실행하지 않으며, 리버스모드 상태도 복사본으로 계산해 캐시에 진행 상태를 저장하지 않음
 - 리버스모드(`execute_reverse_mode()`): T≥분할수 시 발동, 5일 MA 별지점 기반 무한매도+쿼터매수
 - T값 환경변수 보정: `FORCE_T_REINFERENCE`, `{SYMBOL}_FORCE_T`, `{SYMBOL}_MAX_T` (기본 MAX_T=분할수, 리버스모드 진입용 `T=splits` 허용)
 
@@ -131,10 +131,13 @@ uv run pytest tests/ -v
 - **리버스모드** (`src/strategy.py execute_reverse_mode()`):
   - 발동: `T >= splits` + position > 0
   - 1일차: MOC 매도 (보유량 1/10(20분할) or 1/20(40분할)) → T × 0.9/0.95
-  - 2일차+: LOC 매도 @5일MA + LOC 매수 (잔금/4) @별지점-0.01
-  - T 갱신: 매도×0.9/0.95, 매수 후 T+(분할수-T)×0.25
+  - 2일차+: LOC 매도 @5일MA + 실제 주문가능금액 기준 쿼터매수 @별지점-0.01
+  - 리버스모드 날짜는 실행당 1회만 증가하며, DRY 실행으로 저장 상태를 진행시키지 않음
+  - 같은 실행에서 제출한 매도 주문의 예정 매도대금은 매수 가능금액으로 선반영하지 않음
+  - T 갱신은 실제 체결 이력 반영을 기준으로 하며, 전략의 T 계산값만으로 저장하지 않음
   - 종료 조건: 종가 > 평단×(1-0.15)(TQQQ) or ×(1-0.20)(SOXL)
   - 별지점: Finnhub 5일 MA → close_prices(state) → last_price fallback
+- **STATE_DIAGNOSTIC_ONLY=true**: GitHub Actions 캐시의 T/reverse_mode 상태만 출력하고 브로커 API, 전략, 주문을 실행하지 않음. 일회성 진단 후 즉시 해제
 - **close_prices**: state.json에 최근 5거래일 종가 저장 (Finnhub fallback용)
 - **`get_daily_closes()`** (`src/broker/base.py`):
   - Broker 추상 메서드: `(symbol, exchange, days=5) → list[float]` (오래된 종가순)

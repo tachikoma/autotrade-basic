@@ -140,8 +140,11 @@ TRADE_MODE=LIVE uv run python trading_bot.py
 | `orders_meta` | dict | 주문별 메타 (t_target, is_additional, 부분체결 추적) |
 | `last_processed_ordno` | str | 마지막 처리 주문번호 |
 | `balance_mismatch` | dict | 잔고 불일치 진단 정보 |
+| `reverse_mode` | dict | 리버스모드 진행일과 누적 매도대금 상태 |
 
 `update_T_from_history()`가 체결 이력을 기반으로 T값을 자동 갱신하며, 브로커 잔고와 이력 기반 포지션을 교차검증해 불일치를 감지합니다.
+
+리버스모드의 진행일(`reverse_mode.day_count`)과 누적 매도대금 상태는 주문 생성만으로 새로 확정하지 않습니다. DRY 모드에서는 전략 계산에 상태 복사본을 사용하므로 실행 횟수가 캐시 상태를 진행시키지 않으며, 같은 실행에서 제출한 매도 주문의 예정금액도 매수 가능금액에 포함하지 않습니다. 실제 T 갱신은 체결 이력 반영을 기준으로 합니다.
 
 ---
 
@@ -160,6 +163,7 @@ TRADE_MODE=LIVE uv run python trading_bot.py
 | `BROKER_MODE` | `real` / `demo` | API 환경 선택(실전/모의). 기본값 `demo`. (하위호환: `KIS_MODE`도 폴백 지원) |
 | `TRADE_MODE` | `LIVE` / `DRY` | 실제 주문 실행 여부. `DRY`는 주문 정보만 출력합니다. |
 | `ORDER_HISTORY_VERBOSE` | `true` / `false` | LIVE 모드에서도 `[주문이력 요약]` 상세 출력. 기본값 `false`. DRY는 항상 출력. |
+| `STATE_DIAGNOSTIC_ONLY` | `true` / `false` | 캐시 상태만 출력하고 API/전략/주문을 실행하지 않음. 기본값 `false`. |
 
 > **하위호환**: `BROKER_MODE` 대신 기존 `KIS_MODE`를 사용해도 작동합니다 (`config.py`가 폴백).
 
@@ -182,6 +186,7 @@ KIS_ACCOUNT_NO=12345678
 # 거래 설정
 TRADE_MODE=DRY                  # DRY 또는 LIVE
 ORDER_HISTORY_VERBOSE=false     # true 시 LIVE에서도 주문이력 상세 출력
+STATE_DIAGNOSTIC_ONLY=false     # true 시 캐시 상태만 출력하고 종료
 SYMBOLS=TQQQ:NAS,SOXL:AMS       # 브로커별 거래소 코드 주의 (아래 참고)
 TQQQ_SPLITS=40
 TQQQ_SYMBOL_TYPE=TQQQ
@@ -197,6 +202,7 @@ ADDITIONAL_LOC_LEVELS=3         # 모든 종목 공통 기본값 (종목별 설�
 환경 변수 관련 주요 동작 요약:
 
 - **다중 종목 중심**: `SYMBOLS`에 `TQQQ:NAS,SOXL:AMS` 형태로 종목을 지정합니다. 미설정 시 기본값은 `TQQQ:NAS,SOXL:AMS`입니다.
+- **캐시 상태 진단**: GitHub Actions에서 `.state.json`을 직접 확인할 수 없을 때 해당 Environment의 `STATE_DIAGNOSTIC_ONLY=true`로 1회 실행하면 T, 리버스모드 진행일, 누적 매도대금, 마지막 처리 주문번호만 출력합니다. 확인 후 변수를 즉시 `false` 또는 삭제하세요.
 - **종목별 설정**: `{SYMBOL}_SPLITS`, `{SYMBOL}_SYMBOL_TYPE`, `{SYMBOL}_SEED`, `{SYMBOL}_ADDITIONAL_LOC_LEVELS`를 사용합니다.
   - `{SYMBOL}_SEED`는 **필수**입니다. 미설정 시 시작 시 에러가 발생합니다.
   - `{SYMBOL}_ADDITIONAL_LOC_LEVELS` 미설정 시 글로벌 `ADDITIONAL_LOC_LEVELS`를 사용하며, 이것도 없으면 기본값 3이 적용됩니다.

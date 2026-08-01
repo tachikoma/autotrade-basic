@@ -188,6 +188,9 @@ jobs:
           # 주문이력 상세 출력 (true: LIVE 모드에서도 [주문이력 요약] 출력, 기본 false)
           ORDER_HISTORY_VERBOSE: ${{ vars.ORDER_HISTORY_VERBOSE || 'false' }}
 
+          # 캐시 상태만 출력하고 API/전략/주문을 실행하지 않는 일회성 진단 모드
+          STATE_DIAGNOSTIC_ONLY: ${{ vars.STATE_DIAGNOSTIC_ONLY || 'false' }}
+
           # API 연결 타임아웃 (초 단위, 기본값 30초)
           CONNECT_TIMEOUT: 30
 

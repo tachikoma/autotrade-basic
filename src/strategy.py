@@ -158,10 +158,8 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
                 "comment": f"리버스모드 {day_count}일차 MOC 매도 ({splits}분할 1/{divisor})",
                 "t_target": 0.0,
             })
-            sell_proceeds += sell_qty * last_price
         new_T = round(T * sell_factor, 4)
         print(f"  → MOC 매도 {sell_qty}주, T: {T} → {new_T}")
-        day_count += 1
     else:
         star = _get_reverse_star_point(symbol, last_price, close_prices)
         adjusted_star = adjust_price_to_tick(star)
@@ -176,10 +174,11 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
                 "comment": f"리버스모드 {day_count}일차 LOC 매도 @별지점",
                 "t_target": 0.0,
             })
-            sell_proceeds += sell_qty * adjusted_star
         new_T_sell = round(T * sell_factor, 4)
 
-        total_cash = max(orderable_cash, 0) + sell_proceeds
+        # 같은 실행에서 제출한 매도 주문은 아직 체결되지 않았을 수 있습니다.
+        # 브로커가 반환한 실제 주문가능금액만 사용해 매수 수량을 계산합니다.
+        total_cash = max(orderable_cash, 0)
         buy_amount = total_cash / 4
         buy_qty = math.floor(buy_amount / adjusted_star) if adjusted_star > 0 else 0
         if buy_qty > 0:
@@ -200,8 +199,6 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
             new_T = new_T_sell
             print(f"  → LOC 매도 {sell_qty}주 @${adjusted_star}, 매수 불가 (잔금 부족)")
             print(f"  → T: {T} → {new_T}")
-
-        day_count += 1
 
         if day_count > 5 and position_qty <= 0:
             print(f"[리버스모드] {symbol} 전량 매도 완료 → 리버스모드 종료")
@@ -638,4 +635,3 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
         "take_profit_price": take_profit_price,
         "orders": orders,
     }
-
