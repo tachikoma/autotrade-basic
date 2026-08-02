@@ -95,6 +95,7 @@ class LSBroker(Broker):
         tr_id: str,
         body: dict,
         extra_headers: Optional[dict] = None,
+        retry_network: bool = True,
     ) -> requests.Response:
         """
         LS API POST 요청을 실행합니다.
@@ -143,6 +144,8 @@ class LSBroker(Broker):
                 return resp
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if not retry_network:
+                    raise
                 network_retry_count += 1
                 if network_retry_count <= MAX_RETRIES:
                     wait = min(30, 2 ** network_retry_count) * random.uniform(0.75, 1.25)
@@ -816,7 +819,8 @@ class LSBroker(Broker):
 
         try:
             resp = self._post(
-                "/overseas-stock/order", tr_id=TR_ID_ORDER, body=body
+                "/overseas-stock/order", tr_id=TR_ID_ORDER, body=body,
+                retry_network=False,
             )
             data = resp.json()
 

@@ -191,6 +191,17 @@ jobs:
           # 캐시 상태만 출력하고 API/전략/주문을 실행하지 않는 일회성 진단 모드
           STATE_DIAGNOSTIC_ONLY: ${{ vars.STATE_DIAGNOSTIC_ONLY || 'false' }}
 
+          # 기대 fingerprint가 일치할 때만 캐시의 리버스 상태를 초기화하는 일회성 복구 모드
+          STATE_REPAIR_ONLY: ${{ vars.STATE_REPAIR_ONLY || 'false' }}
+          STATE_REPAIR_SYMBOL: ${{ vars.STATE_REPAIR_SYMBOL }}
+          STATE_REPAIR_EXPECT_T: ${{ vars.STATE_REPAIR_EXPECT_T }}
+          STATE_REPAIR_EXPECT_DAY_COUNT: ${{ vars.STATE_REPAIR_EXPECT_DAY_COUNT }}
+          STATE_REPAIR_EXPECT_PROCEEDS: ${{ vars.STATE_REPAIR_EXPECT_PROCEEDS }}
+          STATE_REPAIR_EXPECT_LAST_UPDATED: ${{ vars.STATE_REPAIR_EXPECT_LAST_UPDATED }}
+          STATE_REPAIR_EXPECT_LAST_ORDNO: ${{ vars.STATE_REPAIR_EXPECT_LAST_ORDNO }}
+          STATE_REPAIR_EXPECT_REVERSE_IDS: ${{ vars.STATE_REPAIR_EXPECT_REVERSE_IDS }}
+          STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT: ${{ vars.STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT }}
+
           # API 연결 타임아웃 (초 단위, 기본값 30초)
           CONNECT_TIMEOUT: 30
 

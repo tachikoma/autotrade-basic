@@ -29,6 +29,7 @@ from notifier import notify
 
 
 STATE_DIAGNOSTIC_ONLY = os.getenv("STATE_DIAGNOSTIC_ONLY", "").strip().lower() == "true"
+STATE_REPAIR_ONLY = os.getenv("STATE_REPAIR_ONLY", "").strip().lower() == "true"
 
 
 def generate_cycle_report(symbol, order_history, state, seed, commission_rate):
@@ -213,6 +214,23 @@ def run_one_symbol(broker: Broker, symbol_config):
 
     state = load_state(symbol)
 
+    if TRADE_MODE == "LIVE" and state.get("_state_unavailable"):
+        raise RuntimeError(
+            f"{symbol} 상태 파일을 확인할 수 없어 LIVE 주문을 중단합니다: "
+            f"{state['_state_unavailable']}"
+        )
+
+    if TRADE_MODE == "LIVE" and state.get("pending_order_intent"):
+        raise RuntimeError(
+            f"이전 주문 intent가 남아 있어 상태 reconciliation/신규 주문을 중단합니다: "
+            f"{state['pending_order_intent']}"
+        )
+    if TRADE_MODE == "LIVE" and state.get("pending_order_batch"):
+        raise RuntimeError(
+            f"이전 주문 batch fence가 남아 있어 신규 주문을 중단합니다: "
+            f"{state['pending_order_batch']}"
+        )
+
     force_t = symbol_config.get("force_t")
     max_t = symbol_config.get("max_t")
 
@@ -293,6 +311,11 @@ def run_one_symbol(broker: Broker, symbol_config):
     # 일반 경로(T > 0 조건)는 작동하지 않으므로 여기서 따로 처리합니다.
     completed_cycle_start = state.pop("_completed_cycle_start", None)
     if completed_cycle_start:
+        if _has_unresolved_reverse_orders(state):
+            state.setdefault("reverse_mode", {})["reconciliation_only"] = True
+            state["reverse_mode"]["active"] = False
+            save_state(symbol, state)
+            return
         print(f"\n{'=' * 60}")
         print(f"[사이클 종료] {symbol} — {completed_cycle_start} ~ 완료")
         print(f"{'=' * 60}")
@@ -317,6 +340,7 @@ def run_one_symbol(broker: Broker, symbol_config):
             state["effective_seed"] = 0.0
         state["T"] = 0.0
         state["cycle_start_date"] = ""
+        state["reverse_mode"] = {}
 
     # T 갱신 후 즉시 상태를 저장하여 다음 실행 시 일관성을 보장합니다.
     save_state(symbol, state)
@@ -333,6 +357,11 @@ def run_one_symbol(broker: Broker, symbol_config):
 
     if live_qty is not None:
         if live_qty == 0 and comp_qty > 0:
+            if _has_unresolved_reverse_orders(state):
+                state.setdefault("reverse_mode", {})["reconciliation_only"] = True
+                state["reverse_mode"]["active"] = False
+                save_state(symbol, state)
+                return
             msg = (
                 f"[불일치] 이력으로는 보유 {comp_qty}주(평단 ${comp_avg:.2f})로 추정되나, 브로커 잔고는 0입니다. "
                 f"보수적 자동 보정: T=0으로 초기화합니다."
@@ -348,7 +377,12 @@ def run_one_symbol(broker: Broker, symbol_config):
             }
             state["T"] = 0.0
             state["cycle_start_date"] = ""
+            state["reverse_mode"] = {}
             save_state(symbol, state)
+            raise RuntimeError(
+                f"{symbol} 이력 포지션과 브로커 잔고가 불일치하여 주문을 중단합니다. "
+                f"history={comp_qty}, broker={live_qty}"
+            )
 
         elif live_qty != comp_qty:
             # 불일치지만 자동 보정하지 않음 — 관리자 확인 필요
@@ -365,6 +399,10 @@ def run_one_symbol(broker: Broker, symbol_config):
                 "note": "requires-attention",
             }
             save_state(symbol, state)
+            raise RuntimeError(
+                f"{symbol} 이력 포지션과 브로커 잔고가 불일치하여 주문을 중단합니다. "
+                f"history={comp_qty}, broker={live_qty}"
+            )
 
         elif state["T"] == 0 and live_qty > 0:
             # T=0인데 실제 보유가 있음: T 오추정 (소액 시드로 인한 추가매수 오분류)
@@ -382,6 +420,9 @@ def run_one_symbol(broker: Broker, symbol_config):
                 "note": "T-estimation-suspected-low",
             }
             save_state(symbol, state)
+            raise RuntimeError(
+                f"{symbol} T=0인데 브로커 잔고 {live_qty}주가 있어 주문을 중단합니다."
+            )
 
         else:
             # 일치하는 경우, 기존 불일치 표시 제거
@@ -391,11 +432,17 @@ def run_one_symbol(broker: Broker, symbol_config):
 
     # ── T값 강제 설정 (FORCE_T) ──
     if force_t is not None:
+        if _has_unresolved_reverse_orders(state):
+            state.setdefault("reverse_mode", {})["reconciliation_only"] = True
+            state["reverse_mode"]["active"] = False
+            save_state(symbol, state)
+            raise RuntimeError("미해결 리버스 주문이 있어 FORCE_T 적용을 중단합니다.")
         old_T = state["T"]
         state["T"] = force_t
         state.pop("balance_mismatch", None)
         state["orders_meta"] = {}
         state["additional_loc_odno"] = []
+        state["reverse_mode"] = {}
         # FORCE_T 이후 이력 조회가 stale last_updated 기준으로 이미 반영된 주문을
         # 다시 가산(이중 가산)하는 것을 방지하기 위해, 이번 RUN에서 조회된 최신
         # 주문 시각으로 last_updated를 갱신합니다. 이력이 없으면 현재 UTC를 사용합니다.
@@ -466,14 +513,29 @@ def run_one_symbol(broker: Broker, symbol_config):
         else:
             state["effective_seed"] = 0.0
 
+        if _has_unresolved_reverse_orders(state):
+            state.setdefault("reverse_mode", {})["reconciliation_only"] = True
+            state["reverse_mode"]["active"] = False
+            save_state(symbol, state)
+            return
+
         # T 초기화 및 사이클 시작일 리셋
         state["T"] = 0.0
         state["cycle_start_date"] = ""
+        state["reverse_mode"] = {}
         save_state(symbol, state)
 
         print("  T값 초기화 완료. 새 사이클을 즉시 시작합니다.")
         T = 0.0
         # ── Step 2로 계속 진행 (새 사이클 즉시 시작) ──
+
+    if current_qty == 0 and state.get("reverse_mode", {}).get("active"):
+        if _has_unresolved_reverse_orders(state):
+            state["reverse_mode"]["reconciliation_only"] = True
+            state["reverse_mode"]["active"] = False
+        else:
+            state["reverse_mode"] = {}
+        save_state(symbol, state)
 
     # ── seed 적용 (복리 재투자) ────────────────────────────────
     if REINVEST:
@@ -500,6 +562,14 @@ def run_one_symbol(broker: Broker, symbol_config):
         additional_loc_levels=additional_loc_levels,
         state=strategy_state,
     )
+
+    if strategy_result.get("reverse_exit") and TRADE_MODE == "LIVE":
+        if _has_unresolved_reverse_orders(state):
+            state.setdefault("reverse_mode", {})["reconciliation_only"] = True
+            state["reverse_mode"]["active"] = False
+        else:
+            state["reverse_mode"] = {}
+        save_state(symbol, state)
 
     last_price = strategy_result['last_price']
     close_prices = state.get("close_prices", [])
@@ -557,9 +627,26 @@ def run_one_symbol(broker: Broker, symbol_config):
 
     order_exchange_code = broker.exchange_code(exchange)
 
+    if TRADE_MODE == "LIVE":
+        state["pending_order_batch"] = {
+            "session": datetime.now(ZoneInfo("America/New_York")).date().isoformat(),
+            "orders": [
+                {
+                    "side": item["side"],
+                    "quantity": int(item["quantity"]),
+                    "price": item["price"],
+                    "order_type": item["order_type"],
+                    "comment": item["comment"],
+                }
+                for item in orders
+            ],
+        }
+        save_state(symbol, state)
+
     executed_orders = []
     reserved_orders = []
     failed_orders = []
+    fatal_order_error = False
 
     for i, order in enumerate(orders, 1):
         print(f"\n주문 {i}/{len(orders)} 실행: {order['comment']}")
@@ -578,6 +665,25 @@ def run_one_symbol(broker: Broker, symbol_config):
                         notify(f"{symbol} ⚠️ LOC 가격 보정\n원가격: ${order_price:.2f}\n현재가: ${strategy_last_price:.2f}\n보정가: ${corrected_price:.2f}")
                         order_price = corrected_price
 
+            if TRADE_MODE == "LIVE":
+                state["pending_order_intent"] = {
+                    "symbol": symbol,
+                    "side": order["side"],
+                    "quantity": int(order["quantity"]),
+                    "price": order_price,
+                    "order_type": order["order_type"],
+                    "comment": order["comment"],
+                    "submitted_session": datetime.now(
+                        ZoneInfo("America/New_York")
+                    ).date().isoformat(),
+                }
+                try:
+                    save_state(symbol, state)
+                except Exception as intent_error:
+                    raise RuntimeError(
+                        f"주문 전 intent checkpoint 실패: {intent_error}"
+                    ) from intent_error
+
             result = broker.place_order(
                 symbol,
                 order_exchange_code,
@@ -588,6 +694,8 @@ def run_one_symbol(broker: Broker, symbol_config):
             )
 
             if result:
+                if not str(result.order_id or "").strip():
+                    raise RuntimeError("주문 접수 응답에 유효한 주문번호가 없습니다.")
                 is_additional = "[추가매수]" in order.get("comment", "")
 
                 # 기존: additional_loc_odno 유지 (미등록 호환)
@@ -600,13 +708,46 @@ def run_one_symbol(broker: Broker, symbol_config):
                 if t_target is None:
                     t_target = 0.0 if is_additional else 1.0
 
-                register_order_meta_in_state(state, result.order_id, {
+                order_meta = {
                     "side": order["side"],
                     "total_qty": int(order["quantity"]),
                     "t_target": float(t_target),
                     "is_additional": bool(is_additional),
                     "processed_filled_qty": 0,
-                })
+                }
+                if order.get("reverse_action"):
+                    reverse_mode = state.setdefault("reverse_mode", {})
+                    cycle_id = reverse_mode.get("cycle_id") or datetime.now(
+                        ZoneInfo("UTC")
+                    ).isoformat()
+                    order_meta.update({
+                        "reverse_action": order["reverse_action"],
+                        "reverse_day": int(order.get("reverse_day", 0)),
+                        "cycle_id": cycle_id,
+                        "submitted_at": result.order_time,
+                        "submitted_session": datetime.now(
+                            ZoneInfo("America/New_York")
+                        ).date().isoformat(),
+                    })
+                    for key in ("reverse_base_t", "reverse_t_factor", "reverse_t_target"):
+                        if key in order:
+                            order_meta[key] = float(order[key])
+                    reverse_mode["active"] = True
+                    reverse_mode["cycle_id"] = cycle_id
+                    reverse_mode["last_planned_session"] = datetime.now(
+                        ZoneInfo("America/New_York")
+                    ).date().isoformat()
+                register_order_meta_in_state(state, result.order_id, order_meta)
+                state["pending_order_intent"] = None
+                if TRADE_MODE == "LIVE":
+                    # 주문 응답을 받은 즉시 메타데이터를 checkpoint하여
+                    # 이후 주문 실패/프로세스 중단 시에도 체결 reconciliation이 가능합니다.
+                    try:
+                        save_state(symbol, state)
+                    except Exception as checkpoint_error:
+                        raise RuntimeError(
+                            f"주문은 접수됐지만 상태 checkpoint에 실패했습니다: {checkpoint_error}"
+                        ) from checkpoint_error
 
                 if result.is_reservation:
                     reserved_orders.append({
@@ -637,10 +778,21 @@ def run_one_symbol(broker: Broker, symbol_config):
 시각: {result.order_time}"""
                     notify(message)
             else:
+                if TRADE_MODE == "LIVE":
+                    raise RuntimeError("주문 접수 응답이 없어 pending intent를 해소하지 못했습니다.")
                 print("✓ 주문 정보 출력 완료")
 
         except Exception as error:
             print(f"✗ 주문 실패: {str(error)}")
+            if TRADE_MODE == "LIVE":
+                fatal_order_error = True
+            if any(marker in str(error) for marker in (
+                "checkpoint에 실패했습니다",
+                "intent checkpoint 실패",
+                "유효한 주문번호가 없습니다",
+                "주문 접수 응답",
+            )):
+                fatal_order_error = True
             failed_orders.append(
                 {
                     "comment": order["comment"],
@@ -653,7 +805,16 @@ def run_one_symbol(broker: Broker, symbol_config):
 {order['comment']}
 에러: {str(error)}"""
             notify(message, urgent=True)
+            if fatal_order_error:
+                break
             continue
+
+    if fatal_order_error:
+        raise RuntimeError("주문 접수 후 상태 checkpoint 실패로 추가 주문을 중단했습니다.")
+
+    if TRADE_MODE == "LIVE":
+        state["pending_order_batch"] = None
+        save_state(symbol, state)
 
     print("\n" + "=" * 60)
     print(f"{symbol} 처리 완료")
@@ -663,7 +824,7 @@ def run_one_symbol(broker: Broker, symbol_config):
     should_save = False
     if TRADE_MODE == "LIVE" and (len(executed_orders) > 0 or len(reserved_orders) > 0):
         should_save = True
-    if state.get("reverse_mode", {}).get("day_count", 0) > 0:
+    if state.get("reverse_mode", {}).get("active"):
         should_save = True
     if should_save:
         save_state(symbol, state)
@@ -706,15 +867,100 @@ def _print_state_diagnostic():
         symbol = symbol_config["symbol"]
         state = load_state(symbol)
         reverse_mode = state.get("reverse_mode") or {}
+        reverse_order_ids = sorted(
+            odno for odno, meta in state.get("orders_meta", {}).items()
+            if meta.get("reverse_action")
+        )
         print(
             f"[상태 진단] {symbol} → "
             f"T={state.get('T', 0.0)}, "
             f"day_count={reverse_mode.get('day_count', 0)}, "
             f"cumulative_sell_proceeds=${reverse_mode.get('cumulative_sell_proceeds', 0.0):.2f}, "
+            f"reverse_order_ids={reverse_order_ids}, "
+            f"order_meta_ids={sorted(state.get('orders_meta', {}).keys())}, "
             f"last_updated={state.get('last_updated', '')}, "
             f"last_processed_ordno={state.get('last_processed_ordno', '')}"
         )
     print("[상태 진단] 종료합니다. 상태 파일은 변경하지 않았습니다.")
+
+
+def _has_unresolved_reverse_orders(state):
+    """현재 리버스 cycle에 아직 terminal 확정되지 않은 주문이 있는지 확인합니다."""
+    cycle_id = state.get("reverse_mode", {}).get("cycle_id", "")
+    return any(
+        meta.get("reverse_action")
+        and meta.get("cycle_id") == cycle_id
+        and not meta.get("terminal")
+        for meta in state.get("orders_meta", {}).values()
+    )
+
+
+def _repair_state_only():
+    """기대 fingerprint가 일치할 때만 오염된 리버스 상태를 초기화합니다."""
+    symbol = os.getenv("STATE_REPAIR_SYMBOL", "").strip().upper()
+    expected_t = os.getenv("STATE_REPAIR_EXPECT_T", "").strip()
+    expected_day = os.getenv("STATE_REPAIR_EXPECT_DAY_COUNT", "").strip()
+    expected_proceeds = os.getenv("STATE_REPAIR_EXPECT_PROCEEDS", "").strip()
+    expected_updated = os.getenv("STATE_REPAIR_EXPECT_LAST_UPDATED", "").strip()
+    expected_ordno = os.getenv("STATE_REPAIR_EXPECT_LAST_ORDNO", "").strip()
+    expected_reverse_ids_raw = os.getenv("STATE_REPAIR_EXPECT_REVERSE_IDS", "").strip()
+    expected_reverse_submitted_at = os.getenv("STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT", "").strip()
+    expected_reverse_ids = sorted(filter(None, expected_reverse_ids_raw.split(",")))
+    required = {
+        "STATE_REPAIR_SYMBOL": symbol,
+        "STATE_REPAIR_EXPECT_T": expected_t,
+        "STATE_REPAIR_EXPECT_DAY_COUNT": expected_day,
+        "STATE_REPAIR_EXPECT_PROCEEDS": expected_proceeds,
+        "STATE_REPAIR_EXPECT_LAST_UPDATED": expected_updated,
+        "STATE_REPAIR_EXPECT_LAST_ORDNO": expected_ordno,
+        "STATE_REPAIR_EXPECT_REVERSE_IDS": expected_reverse_ids_raw,
+        "STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT": expected_reverse_submitted_at,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise RuntimeError(f"복구 fingerprint 환경변수가 없습니다: {', '.join(missing)}")
+
+    state = load_state(symbol)
+    reverse_mode = state.get("reverse_mode") or {}
+    actual = {
+        "T": float(state.get("T", 0.0)),
+        "day_count": int(reverse_mode.get("day_count", 0)),
+        "proceeds": float(reverse_mode.get("cumulative_sell_proceeds", 0.0)),
+        "last_updated": state.get("last_updated", ""),
+        "last_ordno": str(state.get("last_processed_ordno", "")),
+        "reverse_ids": sorted(
+            set(expected_reverse_ids)
+            .intersection(state.get("orders_meta", {}).keys())
+            .union({
+                odno for odno, meta in state.get("orders_meta", {}).items()
+                if meta.get("reverse_action")
+            })
+        ),
+    }
+    expected = {
+        "T": float(expected_t),
+        "day_count": int(expected_day),
+        "proceeds": float(expected_proceeds),
+        "last_updated": expected_updated,
+        "last_ordno": expected_ordno,
+        "reverse_ids": expected_reverse_ids,
+    }
+    if actual != expected:
+        raise RuntimeError(f"복구 fingerprint 불일치: actual={actual}, expected={expected}")
+
+    print(f"[상태 복구] {symbol} reverse_mode 초기화: {reverse_mode}")
+    state["reverse_mode"] = {}
+    reverse_order_ids = expected_reverse_ids
+    if reverse_order_ids:
+        print(f"[상태 복구] 리버스 주문 메타데이터 보존(archived): {reverse_order_ids}")
+        for odno in reverse_order_ids:
+            meta = state["orders_meta"][odno]
+            meta.setdefault("reverse_action", "sell")
+            meta["submitted_at"] = expected_reverse_submitted_at
+            meta["repair_archived"] = True
+            meta["terminal"] = True
+    save_state(symbol, state)
+    print(f"[상태 복구] {symbol} T/체결 watermark를 유지하고 리버스 상태만 초기화했습니다.")
 
 
 def main():
@@ -727,6 +973,17 @@ def main():
     if STATE_DIAGNOSTIC_ONLY:
         _print_state_diagnostic()
         return
+    if STATE_REPAIR_ONLY:
+        _repair_state_only()
+        return
+
+    # 전체 T 재추정은 주문을 절대 발생시키지 않아야 합니다.
+    # 브로커 생성 전 config와 이 모듈의 모드를 함께 DRY로 고정합니다.
+    import config as runtime_config
+    if runtime_config.FORCE_T_REINFERENCE and runtime_config.TRADE_MODE == "LIVE":
+        runtime_config.TRADE_MODE = "DRY"
+        globals()["TRADE_MODE"] = "DRY"
+        print("[T 보정] FORCE_T_REINFERENCE=true → 브로커 생성 전 DRY 모드로 고정합니다.")
 
     broker = create_broker()
     try:
@@ -762,6 +1019,22 @@ def main():
                   f"타입={cfg['symbol_type']}"
                   f"{seed_info}")
 
+        if TRADE_MODE == "LIVE":
+            for cfg in SYMBOLS:
+                preflight_state = load_state(cfg["symbol"])
+                if preflight_state.get("_state_unavailable"):
+                    raise RuntimeError(
+                        f"LIVE preflight 실패: {cfg['symbol']} state를 확인할 수 없습니다."
+                    )
+                if preflight_state.get("pending_order_intent") or preflight_state.get("pending_order_batch"):
+                    raise RuntimeError(
+                        f"LIVE preflight 실패: {cfg['symbol']} 이전 주문 fence가 남아 있습니다."
+                    )
+                if preflight_state.get("balance_mismatch"):
+                    raise RuntimeError(
+                        f"LIVE preflight 실패: {cfg['symbol']} balance_mismatch가 남아 있습니다."
+                    )
+
         # ========================================
         # 종목별 순차 처리
         # ========================================
@@ -774,6 +1047,18 @@ def main():
                 print(f"\n✗ {symbol} 처리 중 오류 발생: {str(error)}")
                 if TRADE_MODE != "DRY" or "잔고 부족:" not in str(error):
                     notify(f"⚠️ {symbol} 오류\n\n{str(error)}", urgent=True)
+                if any(marker in str(error) for marker in (
+                    "checkpoint 실패",
+                    "유효한 주문번호가 없습니다",
+                    "주문 접수 응답",
+                    "주문 intent가 남아",
+                    "주문 batch fence가 남아",
+                    "상태 파일을 확인할 수 없어",
+                    "T=0인데 브로커 잔고",
+                    "이력 포지션과 브로커 잔고가 불일치",
+                    "LIVE preflight 실패",
+                )):
+                    raise
 
             if len(SYMBOLS) > 1:
                 time.sleep(1)

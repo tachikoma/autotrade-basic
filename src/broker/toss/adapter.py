@@ -117,6 +117,7 @@ class TossBroker(Broker):
         json_body: dict | None = None,
         extra_headers: dict | None = None,
         return_headers: bool = False,
+        retry_network: bool = True,
     ) -> dict | tuple[dict, requests.structures.CaseInsensitiveDict]:
         """
         토스 API 요청 래퍼 — rate-limit/타임아웃 재시도 포함.
@@ -179,6 +180,8 @@ class TossBroker(Broker):
                 raise BrokerError("API 호출 실패: rate-limit 재시도 초과")
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if not retry_network:
+                    raise
                 network_retry_count += 1
                 if network_retry_count <= MAX_RETRIES:
                     wait = min(30, 2 ** network_retry_count) * random.uniform(0.75, 1.25)
@@ -572,7 +575,8 @@ class TossBroker(Broker):
 
         try:
             data = self._request_with_rate_retry(
-                "POST", "/api/v1/orders", token, json_body=order_body
+                "POST", "/api/v1/orders", token, json_body=order_body,
+                retry_network=False,
             )
             result = data.get("result", {})
             order_id = result.get("orderId", "")

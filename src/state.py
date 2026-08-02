@@ -3,6 +3,7 @@
 # 프로그램이 종료되어도 T값을 잃지 않도록 JSON 파일에 보관합니다.
 import json
 import os
+import tempfile
 from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime
@@ -42,6 +43,9 @@ def load_state(symbol):
             "state_version": "v2",
             "close_prices": [],
             "reverse_mode": {},
+            "pending_order_intent": None,
+            "pending_order_batch": None,
+            "_state_unavailable": "missing",
         }
 
     try:
@@ -49,7 +53,14 @@ def load_state(symbol):
             all_states = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         print(f"[상태] {symbol} 상태 파일 읽기 실패 ({e}) → T=0으로 시작합니다")
-        return {"T": 0.0, "last_updated": "", "cycle_start_date": "", "effective_seed": 0.0, "last_processed_ordno": ""}
+        return {
+            "T": 0.0,
+            "last_updated": "",
+            "cycle_start_date": "",
+            "effective_seed": 0.0,
+            "last_processed_ordno": "",
+            "_state_unavailable": "corrupt",
+        }
 
     if symbol not in all_states:
         print(f"[상태] {symbol} 상태 기록 없음 → T=0으로 시작합니다")
@@ -65,6 +76,9 @@ def load_state(symbol):
             "state_version": "v2",
             "close_prices": [],
             "reverse_mode": {},
+            "pending_order_intent": None,
+            "pending_order_batch": None,
+            "_state_unavailable": "symbol_missing",
         }
 
     state = all_states[symbol]
@@ -79,6 +93,8 @@ def load_state(symbol):
     state_version = state.get("state_version", "v1")
     close_prices = state.get("close_prices", [])
     reverse_mode = state.get("reverse_mode", {})
+    pending_order_intent = state.get("pending_order_intent")
+    pending_order_batch = state.get("pending_order_batch")
 
     print(f"[상태] {symbol} 상태 로드 완료 → T={T}, 마지막 갱신: {last_updated}")
     return {
@@ -93,6 +109,8 @@ def load_state(symbol):
         "state_version": state_version,
         "close_prices": close_prices,
         "reverse_mode": reverse_mode,
+        "pending_order_intent": pending_order_intent,
+        "pending_order_batch": pending_order_batch,
     }
 
 
@@ -114,9 +132,8 @@ def save_state(symbol, state_dict):
         try:
             with open(_STATE_FILE, "r", encoding="utf-8") as f:
                 all_states = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            # 파일이 깨진 경우 새로 덮어씁니다
-            all_states = {}
+        except (json.JSONDecodeError, OSError) as e:
+            raise RuntimeError(f"상태 파일이 손상되어 덮어쓰기를 중단합니다: {e}") from e
 
     # 이 종목 상태 업데이트
     # state_dict에 이미 'last_updated' 값이 있으면 그 값을 우선 사용합니다 (UTC ISO 권장).
@@ -138,10 +155,24 @@ def save_state(symbol, state_dict):
         "state_version": state_dict.get("state_version", "v2"),
         "close_prices": state_dict.get("close_prices", []),
         "reverse_mode": state_dict.get("reverse_mode", {}),
+        "pending_order_intent": state_dict.get("pending_order_intent"),
+        "pending_order_batch": state_dict.get("pending_order_batch"),
     }
 
-    with open(_STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_states, f, ensure_ascii=False, indent=2)
+    state_dir = os.path.dirname(_STATE_FILE)
+    fd, temp_path = tempfile.mkstemp(prefix=".state.", suffix=".tmp", dir=state_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(all_states, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, _STATE_FILE)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
 
     T = all_states[symbol]["T"]
     effective_seed = all_states[symbol]["effective_seed"]
@@ -174,6 +205,198 @@ def register_order_meta_in_state(state, odno, meta):
 def get_order_meta(state, odno):
     """state의 orders_meta에서 odno 메타를 반환하거나 None."""
     return state.get("orders_meta", {}).get(str(odno))
+
+
+def _is_reverse_order(state, odno, order=None):
+    """주문 메타데이터상 리버스모드 주문인지 확인합니다."""
+    meta = state.get("orders_meta", {}).get(str(odno), {})
+    if order is not None and meta.get("submitted_at"):
+        if str(order.get("ord_dt", "")) != str(meta["submitted_at"])[:8]:
+            return False
+    return bool(meta.get("reverse_action"))
+
+
+def _is_terminal_reverse_order(order):
+    """브로커 표준 필드로 리버스 주문의 최종 상태를 판정합니다."""
+    status = str(order.get("prcs_stat_name", "")).strip().upper()
+    if status in {"미체결", "부분체결", "취소거부", "접수", "대기", "OPEN", "PARTIAL", "PENDING", "NEW"}:
+        return False
+    if status in {
+        "체결", "취소", "거부", "만료", "종료", "완료",
+        "FILLED", "CANCELED", "CANCELLED", "REJECTED", "EXPIRED", "CLOSED",
+    }:
+        return True
+    remaining = order.get("nccs_qty")
+    if remaining is None:
+        return False
+    try:
+        return float(remaining) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
+def reconcile_reverse_fills(state, order_history):
+    """리버스모드 주문의 실제 누적 체결만 상태에 반영합니다.
+
+    일반 T 갱신의 전역 시간 워터마크와 별도로 주문번호를 기준으로
+    누적 체결수량을 비교합니다. 따라서 부분체결이 다음 실행에서 증가해도
+    이미 반영한 수량을 다시 반영하지 않습니다.
+    """
+    orders_meta = state.get("orders_meta", {})
+    history_by_odno = {}
+    for order in order_history:
+        odno = str(order.get("odno", ""))
+        if not odno:
+            continue
+        history_by_odno.setdefault(odno, []).append(order)
+    events = []
+    reverse_mode = state.setdefault("reverse_mode", {})
+    active_cycle_id = reverse_mode.get("cycle_id", "")
+    if not active_cycle_id:
+        return
+
+    def _order_for_meta(odno, meta):
+        candidates = history_by_odno.get(str(odno), [])
+        submitted_at = str(meta.get("submitted_at", ""))
+        if submitted_at:
+            candidates = [
+                order for order in candidates
+                if str(order.get("ord_dt", "")) == submitted_at[:8]
+            ]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda order: float(order.get("ft_ccld_qty", "0") or 0),
+        )
+
+    for odno, meta in orders_meta.items():
+        if not meta.get("reverse_action"):
+            continue
+        if meta.get("cycle_id") != active_cycle_id:
+            continue
+        order = _order_for_meta(odno, meta)
+        if not order:
+            submitted_at = str(meta.get("submitted_at", ""))
+            today_session = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+            if meta.get("submitted_session", "") < today_session:
+                reverse_mode["reconciliation_error"] = "reverse_order_history_missing"
+                reverse_mode["reconciliation_only"] = True
+                print(f"[경고] 리버스 주문 이력 누락: odno={odno} → 신규 주문을 보류합니다.")
+            continue
+        submitted_at = str(meta.get("submitted_at", ""))
+        today_session = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        if (
+            meta.get("submitted_session", "")
+            and meta.get("submitted_session", "") < today_session
+            and not _is_terminal_reverse_order(order)
+        ):
+            reverse_mode["reconciliation_error"] = "reverse_order_not_terminal"
+            reverse_mode["reconciliation_only"] = True
+            print(f"[경고] 전일 리버스 주문이 종결되지 않음: odno={odno} → 신규 주문을 보류합니다.")
+        try:
+            filled_qty = max(0, int(float(order.get("ft_ccld_qty", "0"))))
+            processed_qty = max(0, int(meta.get("processed_filled_qty", 0)))
+            total_qty = max(0, int(meta.get("total_qty", 0)))
+        except (TypeError, ValueError):
+            continue
+        if total_qty <= 0:
+            continue
+        events.append((
+            order.get("ord_datetime_utc", ""),
+            str(odno),
+            meta,
+            order,
+            filled_qty,
+            processed_qty,
+            total_qty,
+        ))
+
+    if not events:
+        return
+
+    # 전역 T를 과거 이력으로 재생하지 않고, 마지막 저장 이후 새로 확인된
+    # 체결분만 현재 T에 증분 반영합니다. 이력 조회가 일부 누락되어도
+    # 이미 반영한 과거 체결을 되돌리지 않습니다.
+    confirmed_sell_days = []
+    confirmed_sell_proceeds = float(reverse_mode.get("cumulative_sell_proceeds", 0.0))
+
+    def _filled(order):
+        try:
+            return float(order.get("ft_ccld_qty", "0") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    for _, odno, meta, order, filled_qty, processed_qty, total_qty in sorted(events, key=lambda item: (item[0], item[1])):
+        fill_fraction = min(filled_qty / total_qty, 1.0)
+        observed_fraction = min(filled_qty / total_qty, 1.0)
+        delta_fraction = 0.0
+        action = meta.get("reverse_action")
+        if action == "sell":
+            factor = float(meta.get("reverse_t_factor", 1.0))
+            previous_fraction = min(float(meta.get("applied_fill_fraction", 0.0)), 1.0)
+            delta_fraction = max(0.0, observed_fraction - previous_fraction)
+            base_t = float(meta.get("reverse_base_t", state.get("T", 0.0)))
+            state["T"] = float(state.get("T", 0.0)) - base_t * (1.0 - factor) * delta_fraction
+            try:
+                cumulative_amount = float(order.get("ft_ccld_amt3", "0"))
+                previous_amount = float(meta.get("processed_filled_amount", 0.0))
+                confirmed_sell_proceeds += max(0.0, cumulative_amount - previous_amount)
+            except (TypeError, ValueError):
+                pass
+            terminal = _is_terminal_reverse_order(order)
+            status = str(order.get("prcs_stat_name", ""))
+            if filled_qty > 0 and terminal and "거부" not in status:
+                confirmed_sell_days.append(int(meta.get("reverse_day", 0) or 0))
+            if terminal:
+                meta["terminal"] = True
+        elif action == "buy":
+            previous_fraction = min(float(meta.get("applied_fill_fraction", 0.0)), 1.0)
+            delta_fraction = max(0.0, observed_fraction - previous_fraction)
+            state["T"] = float(state.get("T", 0.0)) + float(meta.get("reverse_t_target", 0.0)) * delta_fraction
+            if _is_terminal_reverse_order(order):
+                meta["terminal"] = True
+
+        meta["processed_filled_qty"] = max(
+            int(meta.get("processed_filled_qty", 0)), filled_qty
+        )
+        meta["applied_fill_fraction"] = min(
+            1.0,
+            float(meta.get("applied_fill_fraction", 0.0)) + delta_fraction,
+        )
+        try:
+            meta["processed_filled_amount"] = max(
+                float(meta.get("processed_filled_amount", 0.0)),
+                float(order.get("ft_ccld_amt3", "0")),
+            )
+        except (TypeError, ValueError):
+            meta["processed_filled_amount"] = 0.0
+
+        if action == "sell":
+            print(f"  → 리버스 매도 체결 반영: odno={odno}, ({filled_qty}/{total_qty})")
+        elif action == "buy":
+            print(f"  → 리버스 매수 체결 반영: odno={odno}, ({filled_qty}/{total_qty})")
+
+    if confirmed_sell_days:
+        reverse_mode["active"] = True
+        reverse_mode["day_count"] = max(
+            int(reverse_mode.get("day_count", 0)),
+            max(confirmed_sell_days),
+        )
+    reverse_mode["cumulative_sell_proceeds"] = round(confirmed_sell_proceeds, 2)
+    state["T"] = round(float(state.get("T", 0.0)), 4)
+    reverse_mode["cumulative_sell_proceeds"] = round(confirmed_sell_proceeds, 2)
+    cycle_meta = [
+        meta for meta in orders_meta.values()
+        if meta.get("reverse_action") and meta.get("cycle_id") == active_cycle_id
+    ]
+    if reverse_mode.get("reconciliation_only") and cycle_meta and all(meta.get("terminal") for meta in cycle_meta):
+        if reverse_mode.get("active"):
+            reverse_mode.pop("reconciliation_only", None)
+            reverse_mode.pop("reconciliation_error", None)
+        else:
+            state["reverse_mode"] = {}
+    print(f"  → 리버스 체결 reconciliation 완료: T={state['T']}, day_count={reverse_mode.get('day_count', 0)}")
 
 
 def update_T_from_history(symbol, state, order_history, balance_qty=None):
@@ -233,7 +456,19 @@ def update_T_from_history(symbol, state, order_history, balance_qty=None):
 
     if last_updated_dt is None:
         # 초기 모드: 전체 이력에서 T를 처음부터 재계산합니다
-        return _infer_T_from_full_history(symbol, state, order_history)
+        reverse_baseline_t = state.get("T", 0.0)
+        active_cycle_id = state.get("reverse_mode", {}).get("cycle_id", "")
+        has_reverse_meta = any(
+            meta.get("reverse_action")
+            and not meta.get("repair_archived")
+            and meta.get("cycle_id") == active_cycle_id
+            for meta in state.get("orders_meta", {}).values()
+        )
+        state = _infer_T_from_full_history(symbol, state, order_history)
+        if has_reverse_meta:
+            state["T"] = reverse_baseline_t
+        reconcile_reverse_fills(state, order_history)
+        return state
 
     # Safety net: T 오추정 상태에서 orders_meta가 있으면 full 재추정
     mismatch_note = state.get("balance_mismatch", {}).get("note")
@@ -256,8 +491,19 @@ def update_T_from_history(symbol, state, order_history, balance_qty=None):
             return state
 
         candidate_state = deepcopy(state)
+        reverse_baseline_t = candidate_state.get("T", 0.0)
+        active_cycle_id = candidate_state.get("reverse_mode", {}).get("cycle_id", "")
+        has_reverse_meta = any(
+            meta.get("reverse_action")
+            and not meta.get("repair_archived")
+            and meta.get("cycle_id") == active_cycle_id
+            for meta in candidate_state.get("orders_meta", {}).values()
+        )
         candidate_state.pop("balance_mismatch", None)
         candidate_state = _infer_T_from_full_history(symbol, candidate_state, order_history)
+        if has_reverse_meta:
+            candidate_state["T"] = reverse_baseline_t
+        reconcile_reverse_fills(candidate_state, order_history)
         inferred_T = float(candidate_state.get("T", 0.0) or 0.0)
 
         if inferred_T <= 0 and balance_qty is None:
@@ -271,7 +517,9 @@ def update_T_from_history(symbol, state, order_history, balance_qty=None):
         state.update(candidate_state)
         return state
 
-    # 일반 모드: last_updated_dt 이후의 이력만 T에 반영합니다
+    # 일반 모드: 리버스 주문은 주문번호 기준으로 먼저 반영한 뒤,
+    # 나머지 주문만 last_updated_dt 이후 이력으로 처리합니다.
+    reconcile_reverse_fills(state, order_history)
     return _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last_processed_ordno, balance_qty)
 
 
@@ -368,8 +616,31 @@ def _infer_T_from_full_history(symbol, state, order_history):
     for ord_dt in sorted(orders_by_date.keys()):
         day_orders = orders_by_date[ord_dt]
 
-        day_sells = [o for o in day_orders if o.get("sll_buy_dvsn_cd_name") == "매도"]
-        day_buys  = [o for o in day_orders if o.get("sll_buy_dvsn_cd_name") == "매수"]
+        orders_meta = state.get("orders_meta", {})
+        reverse_sells = [
+            o for o in day_orders
+            if o.get("sll_buy_dvsn_cd_name") == "매도"
+            and _is_reverse_order(state, o.get("odno", ""), o)
+        ]
+        reverse_buys = [
+            o for o in day_orders
+            if o.get("sll_buy_dvsn_cd_name") == "매수"
+            and _is_reverse_order(state, o.get("odno", ""), o)
+        ]
+        for order in reverse_sells:
+            net_qty = max(0, net_qty - int(float(order.get("ft_ccld_qty", "0"))))
+        for order in reverse_buys:
+            net_qty += int(float(order.get("ft_ccld_qty", "0")))
+        day_sells = [
+            o for o in day_orders
+            if o.get("sll_buy_dvsn_cd_name") == "매도"
+            and not _is_reverse_order(state, o.get("odno", ""), o)
+        ]
+        day_buys = [
+            o for o in day_orders
+            if o.get("sll_buy_dvsn_cd_name") == "매수"
+            and not _is_reverse_order(state, o.get("odno", ""), o)
+        ]
 
         # 매도 처리: 보유수량 대비 비율로 쿼터매도 / 목표매도 / 전량매도 구분
         # 쿼터매도: 보유량의 ~25% 매도 → 비율 < 0.5 → T × 0.75
@@ -391,8 +662,6 @@ def _infer_T_from_full_history(symbol, state, order_history):
             else:
                 T = round(T * 0.75, 4)
             net_qty = max(0, net_qty - sell_qty)
-
-        orders_meta = state.get("orders_meta", {})
 
         def _is_additional_buy(o, avg_price, net_qty_before=0):
             """return True if this buy is an additional (extra) buy that should NOT increment T"""
@@ -633,6 +902,10 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
                   f"qty={o.get('ft_ccld_qty','0')}")
             continue
 
+        # 리버스모드 주문은 주문번호 기반 reconciliation에서 처리합니다.
+        if _is_reverse_order(state, o.get("odno", ""), o):
+            continue
+
         odno = o.get("odno", "")
         include = False
         if o_dt > last_updated_dt:
@@ -676,7 +949,19 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
             # 잔고 0 → 잘못된 state.json(T>0, 잔고0, 이력0) 복구를 위해 전체 재추정.
             # 전체 이력도 비면 _infer_T_from_full_history가 T=0으로 리셋합니다.
             print(f"[상태] {symbol} {last_updated_dt.date()} 이후 체결 내역 없음 + 잔고 0 → 전체 이력 재추정 시도 (T={state['T']})")
-            return _infer_T_from_full_history(symbol, state, order_history)
+            reverse_baseline_t = state.get("T", 0.0)
+            active_cycle_id = state.get("reverse_mode", {}).get("cycle_id", "")
+            has_reverse_meta = any(
+                meta.get("reverse_action")
+                and not meta.get("repair_archived")
+                and meta.get("cycle_id") == active_cycle_id
+                for meta in state.get("orders_meta", {}).values()
+            )
+            state = _infer_T_from_full_history(symbol, state, order_history)
+            if has_reverse_meta:
+                state["T"] = reverse_baseline_t
+            reconcile_reverse_fills(state, order_history)
+            return state
         print(f"[상태] {symbol} {last_updated_dt.date()} 이후 체결 내역 없음 → T=0 유지")
         return state
 
@@ -688,6 +973,23 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
 
     # 매도 분류를 위해 기준 시점의 순보유수량을 미리 계산합니다
     net_qty = _compute_net_qty_up_to(order_history, last_updated_dt)
+    for order in order_history:
+        odt_iso = order.get("ord_datetime_utc")
+        if not odt_iso or not _is_reverse_order(state, order.get("odno", ""), order):
+            continue
+        try:
+            reverse_dt = datetime.fromisoformat(odt_iso)
+            if reverse_dt.tzinfo is None:
+                reverse_dt = reverse_dt.replace(tzinfo=ZoneInfo("UTC"))
+            filled = int(float(order.get("ft_ccld_qty", "0")))
+        except (TypeError, ValueError):
+            continue
+        if reverse_dt <= last_updated_dt:
+            continue
+        if order.get("sll_buy_dvsn_cd_name") == "매도":
+            net_qty = max(0, net_qty - filled)
+        elif order.get("sll_buy_dvsn_cd_name") == "매수":
+            net_qty += filled
 
     print(f"[상태] {symbol} {last_updated_dt.date()} 이후 체결 {len(recent_candidates)}건 발견 → T값 업데이트 시작 (현재 T={T})")
 
@@ -705,8 +1007,25 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
         day_items = orders_by_date[ord_dt]
         day_items.sort(key=lambda tup: (tup[0], tup[1] or ""))
 
-        day_sells = [(o_dt, odno, o) for o_dt, odno, o in day_items if o.get("sll_buy_dvsn_cd_name") == "매도"]
-        day_buys  = [(o_dt, odno, o) for o_dt, odno, o in day_items if o.get("sll_buy_dvsn_cd_name") == "매수"]
+        for _, odno, order in day_items:
+            if not _is_reverse_order(state, odno, order):
+                continue
+            filled = int(float(order.get("ft_ccld_qty", "0")))
+            if order.get("sll_buy_dvsn_cd_name") == "매도":
+                net_qty = max(0, net_qty - filled)
+            elif order.get("sll_buy_dvsn_cd_name") == "매수":
+                net_qty += filled
+
+        day_sells = [
+            (o_dt, odno, o) for o_dt, odno, o in day_items
+            if o.get("sll_buy_dvsn_cd_name") == "매도"
+            and not _is_reverse_order(state, odno, o)
+        ]
+        day_buys = [
+            (o_dt, odno, o) for o_dt, odno, o in day_items
+            if o.get("sll_buy_dvsn_cd_name") == "매수"
+            and not _is_reverse_order(state, odno, o)
+        ]
 
         # 매도 처리: 보유수량 대비 비율로 쿼터매도 / 목표매도 / 전량매도 구분
         # 쿼터매도: 보유량의 ~25% → 비율 < 0.5 → T × 0.75

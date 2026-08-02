@@ -157,6 +157,7 @@ class KiwoomBroker(Broker):
         token: str,
         extra_headers: dict | None = None,
         return_headers: bool = False,
+        retry_network: bool = True,
     ) -> dict | tuple[dict, requests.structures.CaseInsensitiveDict]:
         """
         키움 API 요청 래퍼 — rate-limit/타임아웃 재시도 포함.
@@ -207,6 +208,8 @@ class KiwoomBroker(Broker):
                 raise BrokerError("API 호출 실패: 초당 호출 제한 재시도 초과")
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if not retry_network:
+                    raise
                 network_retry_count += 1
                 if network_retry_count <= MAX_RETRIES:
                     wait = min(30, 2 ** network_retry_count) * random.uniform(0.75, 1.25)
@@ -306,6 +309,10 @@ class KiwoomBroker(Broker):
             "ft_ccld_amt3": ft_ccld_amt3,
             "nccs_qty": raw.get("ord_remnq", "0"),
             "prcs_stat_name": raw.get("ord_stat_nm", ""),
+            "ord_cntr_tp": raw.get("ord_cntr_tp", ""),
+            "cncl_qty": raw.get("cncl_qty", "0"),
+            "text1": raw.get("text1", ""),
+            "cntr_time": raw.get("cntr_time", ""),
             "tr_mket_name": raw.get("stex_nm", ""),
             "tr_crcy_cd": raw.get("crnc_code", "USD"),
             "odno": raw.get("ord_no", ""),
@@ -759,7 +766,7 @@ class KiwoomBroker(Broker):
         }
 
         try:
-            data = self._request_with_rate_retry(tr_id, body, token)
+            data = self._request_with_rate_retry(tr_id, body, token, retry_network=False)
             # KIWOOM API는 flat 구조 (output 래퍼 없음) + ord_no (소문자)
             # 주문시각은 KIWOOM API에서 미제공
             order_id = data.get("ord_no", "")

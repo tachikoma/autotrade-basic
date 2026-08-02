@@ -138,6 +138,8 @@ uv run pytest tests/ -v
   - 종료 조건: 종가 > 평단×(1-0.15)(TQQQ) or ×(1-0.20)(SOXL)
   - 별지점: Finnhub 5일 MA → close_prices(state) → last_price fallback
 - **STATE_DIAGNOSTIC_ONLY=true**: GitHub Actions 캐시의 T/reverse_mode 상태만 출력하고 브로커 API, 전략, 주문을 실행하지 않음. 일회성 진단 후 즉시 해제
+- **STATE_REPAIR_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 리버스 상태를 1회 초기화. `STATE_REPAIR_*` 변수는 실행 직후 삭제
+- **LIVE 주문 fence**: 주문 전 `pending_order_batch`/`pending_order_intent`를 캐시에 저장하며, fence가 남아 있으면 다음 실행과 다른 종목 주문도 중단
 - **close_prices**: state.json에 최근 5거래일 종가 저장 (Finnhub fallback용)
 - **`get_daily_closes()`** (`src/broker/base.py`):
   - Broker 추상 메서드: `(symbol, exchange, days=5) → list[float]` (오래된 종가순)

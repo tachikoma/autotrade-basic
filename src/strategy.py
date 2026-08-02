@@ -1,5 +1,7 @@
 # 매수/매도 여부를 판단하는 전략 로직 — 무한매수법 V4.0
 import math
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from config import TRADE_MODE, LS_DEMO_BYPASS_BUGS
 from broker.base import Broker
 from market_data import get_finnhub_ma5
@@ -127,8 +129,14 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
                          position_qty, avg_price, orderable_cash, last_price,
                          state):
     rev = state.get("reverse_mode", {})
+    if rev.get("reconciliation_error") or rev.get("reconciliation_only"):
+        print(f"[리버스모드] {symbol} 상태 reconciliation 확인 필요 → 신규 주문을 생성하지 않습니다.")
+        return {"orders": [], "new_T": float(state.get("T", 0.0)), "exit": False}
+    session_date = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    if rev.get("last_planned_session") == session_date:
+        print(f"[리버스모드] {symbol} 이미 {session_date} 실행됨 → 중복 주문을 생성하지 않습니다.")
+        return {"orders": [], "new_T": float(state.get("T", 0.0)), "exit": False}
     day_count = rev.get("day_count", 0) + 1
-    sell_proceeds = rev.get("cumulative_sell_proceeds", 0.0)
     close_prices = state.get("close_prices", [])
     T = float(state.get("T", 0.0))
 
@@ -139,9 +147,8 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
     exit_price = avg_price * threshold
     if last_price > exit_price:
         print(f"[리버스모드] {symbol} 종료 조건 충족 (종가 ${last_price:.2f} > ${exit_price:.2f})")
-        state["reverse_mode"] = {}
         new_T = T
-        return {"orders": [], "new_T": new_T, "exit": True}
+        return {"orders": [], "new_T": new_T, "exit": True, "reverse_day": day_count}
 
     print(f"[리버스모드] {symbol} 진입 {day_count}일차 (T={T})")
     is_first_day = (day_count == 1)
@@ -157,6 +164,10 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
                 "order_type": "MOC",
                 "comment": f"리버스모드 {day_count}일차 MOC 매도 ({splits}분할 1/{divisor})",
                 "t_target": 0.0,
+                "reverse_action": "sell",
+                "reverse_day": day_count,
+                "reverse_base_t": T,
+                "reverse_t_factor": sell_factor,
             })
         new_T = round(T * sell_factor, 4)
         print(f"  → MOC 매도 {sell_qty}주, T: {T} → {new_T}")
@@ -173,6 +184,10 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
                 "order_type": "LOC",
                 "comment": f"리버스모드 {day_count}일차 LOC 매도 @별지점",
                 "t_target": 0.0,
+                "reverse_action": "sell",
+                "reverse_day": day_count,
+                "reverse_base_t": T,
+                "reverse_t_factor": sell_factor,
             })
         new_T_sell = round(T * sell_factor, 4)
 
@@ -190,6 +205,10 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
                 "order_type": "LOC",
                 "comment": f"리버스모드 {day_count}일차 쿼터매수 (잔금/4)",
                 "t_target": 0.0,
+                "reverse_action": "buy",
+                "reverse_day": day_count,
+                "reverse_base_t": T,
+                "reverse_t_target": round((splits - new_T_sell) * 0.25, 4),
             })
             new_T_buy = round(new_T_sell + (splits - new_T_sell) * 0.25, 4)
             new_T = new_T_buy
@@ -202,14 +221,9 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
 
         if day_count > 5 and position_qty <= 0:
             print(f"[리버스모드] {symbol} 전량 매도 완료 → 리버스모드 종료")
-            state["reverse_mode"] = {}
             return {"orders": orders, "new_T": new_T, "exit": True}
 
-    state["reverse_mode"] = {
-        "day_count": day_count,
-        "cumulative_sell_proceeds": round(sell_proceeds, 2),
-    }
-    return {"orders": orders, "new_T": new_T, "exit": False}
+    return {"orders": orders, "new_T": new_T, "exit": False, "reverse_day": day_count}
 
 
 def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_type, seed=0, T=0.0, additional_loc_levels=3, state=None):
@@ -337,7 +351,12 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
     # 4. 소진 상태 확인 (T >= splits)
     # ========================================
 
-    if T >= splits:
+    reverse_state = (state or {}).get("reverse_mode", {})
+    reverse_active = bool(
+        reverse_state.get("active", False)
+        or reverse_state.get("reconciliation_only", False)
+    )
+    if T >= splits or reverse_active:
         if state is not None and position_qty > 0:
             rev_result = execute_reverse_mode(
                 broker, symbol, exchange_code, splits, symbol_type,
@@ -361,6 +380,7 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
                 "seed": seed,
                 "remaining_seed": remaining_seed,
                 "T": new_T,
+                "reverse_exit": bool(rev_result.get("exit")),
                 "unit_amount": 0.0,
                 "unit_qty": 0,
                 "star_point": None,
@@ -384,6 +404,7 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
             "seed": seed,
             "remaining_seed": remaining_seed,
             "T": T,
+            "reverse_exit": False,
             "unit_amount": 0.0,
             "unit_qty": 0,
             "star_point": None,

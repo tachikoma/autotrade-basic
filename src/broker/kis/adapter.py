@@ -85,7 +85,8 @@ class KISBroker(Broker):
             raise BrokerError(f"토큰 획득 실패: {str(e)}")
 
     def _request_with_rate_retry(
-        self, method, path, headers=None, params=None, json=None
+        self, method, path, headers=None, params=None, json=None,
+        retry_network: bool = True,
     ) -> requests.Response:
         """
         requests 래퍼 — rate-limit/타임아웃 재시도 포함.
@@ -132,6 +133,8 @@ class KISBroker(Broker):
                 raise BrokerError("API 호출 실패: 초당 호출 제한 재시도 초과")
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if not retry_network:
+                    raise
                 network_retry_count += 1
                 if network_retry_count <= MAX_RETRIES:
                     wait = min(30, 2 ** network_retry_count) * random.uniform(0.75, 1.25)
@@ -672,7 +675,7 @@ class KISBroker(Broker):
 
         try:
             response = self._request_with_rate_retry(
-                "POST", path, headers=headers, json=body
+                "POST", path, headers=headers, json=body, retry_network=False
             )
             response.raise_for_status()
             response_data = response.json()
@@ -737,7 +740,7 @@ class KISBroker(Broker):
 
         try:
             response = self._request_with_rate_retry(
-                "POST", path, headers=headers, json=body
+                "POST", path, headers=headers, json=body, retry_network=False
             )
             response.raise_for_status()
             response_data = response.json()
@@ -761,7 +764,11 @@ class KISBroker(Broker):
             rsvn_dt = output.get("RSVN_ORD_RCIT_DT") or get_kst_now().strftime("%Y%m%d")
 
             return OrderResult(
-                order_id=output.get("ODNO", ""),
+                order_id=(
+                    str(int(output.get("ODNO", "0")))
+                    if str(output.get("ODNO", "")).isdigit()
+                    else output.get("ODNO", "")
+                ),
                 order_time=rsvn_dt,
                 is_reservation=True,
             )

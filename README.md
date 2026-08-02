@@ -164,6 +164,7 @@ TRADE_MODE=LIVE uv run python trading_bot.py
 | `TRADE_MODE` | `LIVE` / `DRY` | 실제 주문 실행 여부. `DRY`는 주문 정보만 출력합니다. |
 | `ORDER_HISTORY_VERBOSE` | `true` / `false` | LIVE 모드에서도 `[주문이력 요약]` 상세 출력. 기본값 `false`. DRY는 항상 출력. |
 | `STATE_DIAGNOSTIC_ONLY` | `true` / `false` | 캐시 상태만 출력하고 API/전략/주문을 실행하지 않음. 기본값 `false`. |
+| `STATE_REPAIR_ONLY` | `true` / `false` | 지정 fingerprint가 일치할 때만 리버스 상태를 1회 복구. 기본값 `false`. |
 
 > **하위호환**: `BROKER_MODE` 대신 기존 `KIS_MODE`를 사용해도 작동합니다 (`config.py`가 폴백).
 
@@ -203,6 +204,7 @@ ADDITIONAL_LOC_LEVELS=3         # 모든 종목 공통 기본값 (종목별 설�
 
 - **다중 종목 중심**: `SYMBOLS`에 `TQQQ:NAS,SOXL:AMS` 형태로 종목을 지정합니다. 미설정 시 기본값은 `TQQQ:NAS,SOXL:AMS`입니다.
 - **캐시 상태 진단**: GitHub Actions에서 `.state.json`을 직접 확인할 수 없을 때 해당 Environment의 `STATE_DIAGNOSTIC_ONLY=true`로 1회 실행하면 T, 리버스모드 진행일, 누적 매도대금, 마지막 처리 주문번호만 출력합니다. 확인 후 변수를 즉시 `false` 또는 삭제하세요.
+- **캐시 상태 복구**: `STATE_REPAIR_ONLY=true`는 API/전략/주문 없이 지정한 fingerprint가 일치할 때만 실행합니다. `STATE_REPAIR_SYMBOL`, `STATE_REPAIR_EXPECT_T`, `STATE_REPAIR_EXPECT_DAY_COUNT`, `STATE_REPAIR_EXPECT_PROCEEDS`, `STATE_REPAIR_EXPECT_LAST_UPDATED`, `STATE_REPAIR_EXPECT_LAST_ORDNO`, `STATE_REPAIR_EXPECT_REVERSE_IDS`, `STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT`를 모두 설정하고, 운영 브랜치의 정확한 캐시에서 1회 실행한 뒤 즉시 모든 복구 변수를 삭제하세요.
 - **종목별 설정**: `{SYMBOL}_SPLITS`, `{SYMBOL}_SYMBOL_TYPE`, `{SYMBOL}_SEED`, `{SYMBOL}_ADDITIONAL_LOC_LEVELS`를 사용합니다.
   - `{SYMBOL}_SEED`는 **필수**입니다. 미설정 시 시작 시 에러가 발생합니다.
   - `{SYMBOL}_ADDITIONAL_LOC_LEVELS` 미설정 시 글로벌 `ADDITIONAL_LOC_LEVELS`를 사용하며, 이것도 없으면 기본값 3이 적용됩니다.
