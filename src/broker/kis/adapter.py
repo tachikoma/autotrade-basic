@@ -23,8 +23,9 @@ from broker.base import (
     OrderResult,
     BrokerError,
     OrderError,
+    OrderNotAcceptedError,
 )
-from broker.market_utils import get_kst_now, is_us_trading_day
+from broker.market_utils import get_kst_now, is_us_trading_day, normalize_order_price
 from broker.kis.session import KISSession
 from broker.kis.auth import get_access_token
 from broker.kis.exchange import convert_exchange_code, get_api_exchange_code
@@ -619,6 +620,9 @@ class KISBroker(Broker):
             print(f"⚠️  모의투자 미지원 주문 유형: {order_type} → LIMIT(지정가)으로 자동 변환합니다.")
             order_type = "LIMIT"
 
+        # 브로커 호가 단위 규칙에 맞춰 주문가를 정규화 ($1+ → 소수점 2자리 등)
+        price = normalize_order_price(price)
+
         ord_dvsn = get_ord_dvsn(order_type)
 
         # 모의투자: 정규장 외 시간이면 예약주문으로 전환
@@ -626,7 +630,7 @@ class KISBroker(Broker):
             now_kst = get_kst_now()
             if not is_kst_regular_market(now_kst):
                 if not is_kst_reserve_window(now_kst):
-                    raise OrderError(
+                    raise OrderNotAcceptedError(
                         "모의투자: 예약주문 가능시간이 아닙니다 (KST 기준). "
                         "정규장 시간 또는 예약주문 가능시간에 다시 시도하세요."
                     )
@@ -684,9 +688,9 @@ class KISBroker(Broker):
                 msg_cd = response_data.get("msg_cd", "")
                 msg1 = response_data.get("msg1", "알 수 없는 에러")
                 if msg_cd:
-                    raise OrderError(f"주문 실패 (응답코드: {msg_cd}): {msg1}")
+                    raise OrderNotAcceptedError(f"주문 실패 (응답코드: {msg_cd}): {msg1}")
                 else:
-                    raise OrderError(f"주문 실패: {msg1}")
+                    raise OrderNotAcceptedError(f"주문 실패: {msg1}")
 
             output = response_data.get("output", {})
             order_id = output.get("ODNO", "")
@@ -749,9 +753,9 @@ class KISBroker(Broker):
                 msg_cd = response_data.get("msg_cd", "")
                 msg1 = response_data.get("msg1", "알 수 없는 에러")
                 if msg_cd:
-                    raise OrderError(f"예약주문 실패 (응답코드: {msg_cd}): {msg1}")
+                    raise OrderNotAcceptedError(f"예약주문 실패 (응답코드: {msg_cd}): {msg1}")
                 else:
-                    raise OrderError(f"예약주문 실패: {msg1}")
+                    raise OrderNotAcceptedError(f"예약주문 실패: {msg1}")
 
             output = response_data.get("output", {})
 

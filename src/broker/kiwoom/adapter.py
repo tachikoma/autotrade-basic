@@ -32,8 +32,9 @@ from broker.base import (
     OrderResult,
     BrokerError,
     OrderError,
+    OrderNotAcceptedError,
 )
-from broker.market_utils import get_kst_now, is_us_trading_day
+from broker.market_utils import get_kst_now, is_us_trading_day, normalize_order_price
 from broker.kiwoom.session import KiwoomSession
 from broker.kiwoom.auth import get_access_token
 from broker.kiwoom.exchange import get_api_exchange_code
@@ -747,9 +748,12 @@ class KiwoomBroker(Broker):
             print(f"⚠️  모의투자 미지원 주문 유형: {order_type} → LIMIT(지정가)으로 자동 변환합니다.")
             order_type = "LIMIT"
 
+        # 브로커 호가 단위 규칙에 맞춰 주문가를 정규화 ($1+ → 소수점 2자리 등)
+        price = normalize_order_price(price)
+
         ord_dvsn_cd = _KIWOOM_ORDER_TYPE_MAP.get(order_type)
         if ord_dvsn_cd is None:
-            raise OrderError(f"지원하지 않는 주문 유형입니다: {order_type}")
+            raise OrderNotAcceptedError(f"지원하지 않는 주문 유형입니다: {order_type}")
 
         tr_id = TR_BUY if side == "BUY" else TR_SELL
         # exchange는 이미 broker.exchange_code()로 변환된 API 코드(ND/NY/NA)이므로
@@ -785,8 +789,10 @@ class KiwoomBroker(Broker):
             )
 
         except BrokerError as e:
-            raise OrderError(str(e)) from e
+            # return_code != 0 거부 응답 또는 rate-limit 재시도 초과 → 주문 미접수가 확정
+            raise OrderNotAcceptedError(str(e)) from e
         except requests.exceptions.RequestException as e:
+            # 네트워크 타임아웃/연결 오류 → 접수 여부 불확실
             raise OrderError(f"주문 실행 실패: {str(e)}")
 
     # ═══════════════════════════════════════════════════════════════════

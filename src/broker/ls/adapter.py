@@ -31,8 +31,9 @@ from broker.base import (
     OrderResult,
     BrokerError,
     OrderError,
+    OrderNotAcceptedError,
 )
-from broker.market_utils import get_kst_now, is_us_trading_day
+from broker.market_utils import get_kst_now, is_us_trading_day, normalize_order_price
 from broker.ls.auth import get_access_token
 from broker.ls.exchange import (
     convert_exchange_code,
@@ -803,6 +804,9 @@ class LSBroker(Broker):
         # OrdPtnCode: 01=매도, 02=매수
         ord_ptn_code = "02" if side == "BUY" else "01"
 
+        # 브로커 호가 단위 규칙에 맞춰 주문가를 정규화 ($1+ → 소수점 2자리 등)
+        price = normalize_order_price(price)
+
         body = {
             "COSAT00301InBlock1": {
                 "RecCnt": 1,
@@ -827,7 +831,7 @@ class LSBroker(Broker):
             if data.get("rsp_cd") != "00000":
                 rsp_cd = data.get("rsp_cd", "")
                 rsp_msg = data.get("rsp_msg", "알 수 없는 에러")
-                raise OrderError(f"주문 실패 (응답코드: {rsp_cd}): {rsp_msg}")
+                raise OrderNotAcceptedError(f"주문 실패 (응답코드: {rsp_cd}): {rsp_msg}")
 
             output = data.get("COSAT00301OutBlock1", {})
             order_id = output.get("OrdNo", "") or output.get("ODNO", "")

@@ -8,13 +8,13 @@ KIS Open API 호출, 무한매수법 V4 전략 로직, 상태 관리 등 자동�
 |------|------|-------|
 | 전략 이해/수정 | strategy.py | `무한매수법_V4()` — 별지점, 전/후반전, 추가매수 LOC |
 | 브로커 구현 | broker/{kis,kiwoom,ls,toss}/ | 각 브로커별 API 어댑터 |
-| 공통 인터페이스 | broker/base.py | `Broker`, `OrderResult`, `BrokerError` |
+| 공통 인터페이스 | broker/base.py | `Broker`, `OrderResult`, `BrokerError`, `OrderNotAcceptedError` |
 | 일봉 종가 조회 | broker/base.py `get_daily_closes()` | TR: KIS=HHDFS76240000, LS=g3204, KIWOOM=usa06012, TOSS=GET /api/v1/candles |
 | state.json I/O | state.py | `load_state()`, `save_state()`, `update_T_from_history()` |
 | 설정 파싱 | config.py | `_parse_symbols()` — SYMBOLS 환경변수 → 종목 설정 dict |
 | Telegram 발송 | telegram.py | `send_telegram()` — 텔레그램 봇 API 호출 |
 | 알림 라우팅 | notifier.py | `notify()` — 조용한 시간 제어, 긴급 메시지 즉시 전송 |
-| 시간/시장 유틸 | broker/market_utils.py | `get_kst_now()`, `is_us_trading_day()` |
+| 시간/시장 유틸 | broker/market_utils.py | `get_kst_now()`, `is_us_trading_day()`, `normalize_order_price()` |
 
 ## CONVENTIONS (src 전용)
 - **broker/{kis,kiwoom,ls,toss}/**: 각 브로커별 `_request_with_rate_retry()` 래퍼 — 재시도/rate-limit 처리
@@ -31,6 +31,8 @@ KIS Open API 호출, 무한매수법 V4 전략 로직, 상태 관리 등 자동�
 | TOSS | `error` 없음 | `error.code` | `error.message` | `_request_with_rate_retry()` |
 
 **참고**: 주문 시각은 모든 브로커에서 `get_kst_now()` 사용 (API 응답 시간 미사용)
+- **`OrderNotAcceptedError`** (`broker/base.py`): 주문이 **확정적으로 미접수**됨이 보장되는 경우만 사용 — 사전검증 실패, 브로커 거부 응답(`rt_cd`/`return_code`/`rsp_cd`/`error` envelope). 네트워크 타임아웃/연결 오류 등 접수 여부가 불확실하면 기존 `OrderError` 유지. trading_bot.py는 미접수 확정 시 fence 해제 후 다음 종목 진행, 불확실 시 fence 유지 + 전체 중단
+- **주문가 정규화**: 각 브로커 `place_order()`는 `normalize_order_price()`(broker/market_utils.py)로 호가 단위 규칙($1+ → 소수점 2자리, $1 미만 → 4자리, 버림)에 맞춰 가격을 정규화 후 전송
 
 ## ANTI-PATTERNS
 - `from config import ...` 지연 임포트 (일부 함수에서 순환참조 방지용)

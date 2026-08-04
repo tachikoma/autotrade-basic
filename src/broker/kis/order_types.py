@@ -3,7 +3,7 @@ KIS 주문 유형 및 TR_ID 레지스트리 — 주문 유형 코드, TR_ID 매�
 
 기존 src/trader.py에서 추출. KISBroker가 내부적으로 사용합니다.
 """
-from broker.base import OrderError
+from broker.base import OrderNotAcceptedError
 
 
 # ── 주문 유형 코드 매핑 ──────────────────────────────────────────────
@@ -25,10 +25,10 @@ def get_ord_dvsn(order_type: str) -> str:
     주문 유형명(LOC, LIMIT 등) → KIS 주문 구분 코드(00, 34 등).
 
     Raises:
-        OrderError: 지원하지 않는 주문 유형인 경우
+        OrderNotAcceptedError: 지원하지 않는 주문 유형인 경우
     """
     if order_type not in ORDER_TYPE_MAP:
-        raise OrderError(f"지원하지 않는 주문 유형입니다: {order_type}")
+        raise OrderNotAcceptedError(f"지원하지 않는 주문 유형입니다: {order_type}")
     return ORDER_TYPE_MAP[order_type]
 
 
@@ -78,7 +78,7 @@ def get_reservation_tr_id(ord_dv: str, mode: str) -> str:
         mode: "real" 또는 "demo"
 
     Raises:
-        OrderError: 잘못된 ord_dv인 경우
+        OrderNotAcceptedError: 잘못된 ord_dv인 경우
     """
     if ord_dv == "usBuy":
         return select_tr_id(TR_ID_RESV_BUY, mode)
@@ -86,4 +86,4 @@ def get_reservation_tr_id(ord_dv: str, mode: str) -> str:
         return select_tr_id(TR_ID_RESV_SELL, mode)
     elif ord_dv == "asia":
         return select_tr_id(TR_ID_RESV_ASIA, mode)
-    raise OrderError(f"ord_dv는 'usBuy', 'usSell', 'asia' 중 하나여야 합니다: {ord_dv}")
+    raise OrderNotAcceptedError(f"ord_dv는 'usBuy', 'usSell', 'asia' 중 하나여야 합니다: {ord_dv}")

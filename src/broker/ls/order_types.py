@@ -5,7 +5,7 @@ LS증권 OPEN API 호가유형코드 (OrdprcPtnCode):
   매수: 00(지정가), M1(LOO), M2(LOC)
   매도: 00(지정가), 03(시장가), M1(LOO), M2(LOC), M3(MOO), M4(MOC)
 """
-from broker.base import OrderError
+from broker.base import OrderNotAcceptedError
 
 
 # ── 주문 유형 코드 매핑 ──────────────────────────────────────────────
@@ -45,13 +45,13 @@ def get_ord_dvsn(order_type: str, side: str = "BUY") -> str:
         str: LS API 호가유형코드
 
     Raises:
-        OrderError: 지원하지 않는 주문 유형인 경우
+        OrderNotAcceptedError: 지원하지 않는 주문 유형인 경우
     """
     if side == "SELL" and order_type in SELL_ORDER_TYPE_MAP:
         return SELL_ORDER_TYPE_MAP[order_type]
     if order_type in ORDER_TYPE_MAP:
         return ORDER_TYPE_MAP[order_type]
-    raise OrderError(
+    raise OrderNotAcceptedError(
         f"지원하지 않는 주문 유형입니다: {order_type} (side={side}). "
         f"매수: {list(ORDER_TYPE_MAP.keys())}, "
         f"매도: {list(SELL_ORDER_TYPE_MAP.keys())}"

@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from config import SYMBOLS, TRADE_MODE, COMMISSION_RATE, REINVEST, BROKER_MODE, LS_DEMO_BYPASS_BUGS, ORDER_HISTORY_VERBOSE
 from broker import create_broker
-from broker.base import Broker, OrderResult
+from broker.base import Broker, OrderResult, OrderNotAcceptedError
 from broker.market_utils import get_kst_now, is_us_dst, is_us_trading_day
 from strategy import 무한매수법_V4, adjust_price_to_tick
 from state import load_state, save_state, update_T_from_history, compute_position_from_history, register_order_meta_in_state
@@ -782,6 +782,34 @@ def run_one_symbol(broker: Broker, symbol_config):
                     raise RuntimeError("주문 접수 응답이 없어 pending intent를 해소하지 못했습니다.")
                 print("✓ 주문 정보 출력 완료")
 
+        except OrderNotAcceptedError as error:
+            print(f"✗ 주문 실패 (미접수 확정): {str(error)}")
+            if TRADE_MODE == "LIVE":
+                # 브로커가 명시적으로 거부해 주문이 접수되지 않았음이 보장되므로
+                # 해소할 주문이 없는 fence만 남기지 않습니다.
+                state["pending_order_intent"] = None
+                state["pending_order_batch"] = None
+                try:
+                    save_state(symbol, state)
+                    print("  → 미접수 확정: 주문 fence를 해제하고 해당 종목의 남은 주문을 중단합니다.")
+                except Exception as save_error:
+                    print(f"✗ fence 해제 상태 저장 실패: {save_error}")
+                    fatal_order_error = True
+            failed_orders.append(
+                {
+                    "comment": order["comment"],
+                    "error": str(error),
+                }
+            )
+
+            message = f"""⚠️ 주문 미접수 확정 {symbol}
+
+{order['comment']}
+에러: {str(error)}
+접수 여부: 미접수 확정
+fence: 해제"""
+            notify(message, urgent=True)
+            break
         except Exception as error:
             print(f"✗ 주문 실패: {str(error)}")
             if TRADE_MODE == "LIVE":
@@ -803,14 +831,19 @@ def run_one_symbol(broker: Broker, symbol_config):
             message = f"""⚠️ 주문 실패 {symbol}
 
 {order['comment']}
-에러: {str(error)}"""
+에러: {str(error)}
+접수 여부: 불확실
+fence: 유지"""
             notify(message, urgent=True)
             if fatal_order_error:
                 break
             continue
 
     if fatal_order_error:
-        raise RuntimeError("주문 접수 후 상태 checkpoint 실패로 추가 주문을 중단했습니다.")
+        raise RuntimeError(
+            "주문 결과 또는 상태 checkpoint를 확정할 수 없어 주문 fence를 유지합니다. "
+            "추가 주문과 다음 LIVE 실행을 중단합니다."
+        )
 
     if TRADE_MODE == "LIVE":
         state["pending_order_batch"] = None
@@ -1049,6 +1082,7 @@ def main():
                     notify(f"⚠️ {symbol} 오류\n\n{str(error)}", urgent=True)
                 if any(marker in str(error) for marker in (
                     "checkpoint 실패",
+                    "fence를 유지",
                     "유효한 주문번호가 없습니다",
                     "주문 접수 응답",
                     "주문 intent가 남아",

@@ -18,6 +18,23 @@ def get_kst_now() -> datetime:
     return datetime.now(ZoneInfo("Asia/Seoul"))
 
 
+def normalize_order_price(price) -> float:
+    """
+    미국 주식 호가 단위 규칙에 맞춰 주문가를 정규화합니다 (버림).
+
+    규칙:
+    - $1.00 미만: 소수점 4자리까지 ($0.0001 단위)
+    - $1.00 이상: 소수점 2자리까지 ($0.01 단위)
+
+    브로커가 거부하는 소수점 자릿수 초과 가격을 미리 차단합니다.
+    """
+    import math
+    price = float(price)
+    if price < 1.0:
+        return math.floor(price * 10000) / 10000
+    return math.floor(price * 100) / 100
+
+
 def is_us_dst() -> bool:
     """현재 시각 기준으로 미국 동부시간(ET)의 서머타임 적용 여부를 반환합니다."""
     ny_now = datetime.now(ZoneInfo("America/New_York"))

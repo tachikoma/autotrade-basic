@@ -65,6 +65,7 @@ autotrade-basic/
 - `.state.json` — 커밋 금지 (GH Actions 캐시로만 관리)
 - `KIS_ACCOUNT_NO` 없는 상태로 KIS API 호출 금지 (KIWOOM/LS/TOSS는 계좌번호 불필요)
 - 모의투자 미지원 주문 유형(LOC/LOO/MOC/MOO) → 자동 LIMIT 변환 (broker별 adapter)
+- 주문가 소수점 초과(예: $1+ 3자리) 전송 금지 — 각 broker `place_order()`가 `normalize_order_price()`로 호가 단위($1+ → 2자리, $1 미만 → 4자리, 버림) 정규화 후 전송
 - `TRADE_MODE` 무단 LIVE 전환 금지 (DRY 먼저 확인)
 - `.venv` 의존성 직접 수정 금지 — 항상 `uv` 사용
 - `FINNHUB_API_KEY` 없어도 동작은 하나, 리버스모드 MA(5) 별지점 정확도를 위해 등록 권장
@@ -130,7 +131,7 @@ uv run pytest tests/ -v
   - ⚠️ GH Actions 캐시는 **브랜치별 격리**입니다. `develop` 수동 RUN에서 보정해도 `main`(repository_dispatch) RUN의 캐시에는 반영되지 않습니다. T 보정은 반드시 운영 브랜치(`main`)에서 실행하세요.
 - **리버스모드** (`src/strategy.py execute_reverse_mode()`):
   - 발동: `T >= splits` + position > 0
-  - 1일차: MOC 매도 (보유량 1/10(20분할) or 1/20(40분할)) → T × 0.9/0.95
+  - 1일차: MOC 매도 (보유량 1/10(20분할) or 1/20(40분할)) → T × 0.9/0.95 (MOC 가격은 `adjust_price_to_tick()`으로 호가 단위 보정 후 전달)
   - 2일차+: LOC 매도 @5일MA + 실제 주문가능금액 기준 쿼터매수 @별지점-0.01
   - 리버스모드 날짜는 실행당 1회만 증가하며, DRY 실행으로 저장 상태를 진행시키지 않음
   - 같은 실행에서 제출한 매도 주문의 예정 매도대금은 매수 가능금액으로 선반영하지 않음
@@ -140,6 +141,8 @@ uv run pytest tests/ -v
 - **STATE_DIAGNOSTIC_ONLY=true**: GitHub Actions 캐시의 T/reverse_mode 상태만 출력하고 브로커 API, 전략, 주문을 실행하지 않음. 일회성 진단 후 즉시 해제
 - **STATE_REPAIR_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 리버스 상태를 1회 초기화. `STATE_REPAIR_*` 변수는 실행 직후 삭제
 - **LIVE 주문 fence**: 주문 전 `pending_order_batch`/`pending_order_intent`를 캐시에 저장하며, fence가 남아 있으면 다음 실행과 다른 종목 주문도 중단
+  - **미접수 확정(`OrderNotAcceptedError`)**: 브로커가 명시적으로 거부(사전검증 실패 또는 거부 응답)해 주문이 접수되지 않았음이 보장되면 fence를 해제하고 해당 종목의 남은 주문만 중단 → 다음 종목 계속 진행
+  - **불확실(네트워크 타임아웃/연결 오류, 주문번호 누락, checkpoint 실패)**: fence 유지 → 전체 프로그램 중단 (수동 해소 필요)
 - **close_prices**: state.json에 최근 5거래일 종가 저장 (Finnhub fallback용)
 - **`get_daily_closes()`** (`src/broker/base.py`):
   - Broker 추상 메서드: `(symbol, exchange, days=5) → list[float]` (오래된 종가순)

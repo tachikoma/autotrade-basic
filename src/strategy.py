@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from config import TRADE_MODE, LS_DEMO_BYPASS_BUGS
 from broker.base import Broker
+from broker.market_utils import normalize_order_price
 from market_data import get_finnhub_ma5
 
 def adjust_price_to_tick(price):
@@ -22,11 +23,7 @@ def adjust_price_to_tick(price):
         >>> adjust_price_to_tick(0.98769)
         0.9876
     """
-    price = float(price)
-    if price < 1.0:
-        return math.floor(price * 10000) / 10000
-    else:
-        return math.floor(price * 100) / 100
+    return normalize_order_price(price)
 
 
 def calculate_star_point(avg_price, T, splits, symbol_type):
@@ -160,7 +157,7 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
             orders.append({
                 "side": "SELL",
                 "quantity": sell_qty,
-                "price": last_price,
+                "price": adjust_price_to_tick(last_price),
                 "order_type": "MOC",
                 "comment": f"리버스모드 {day_count}일차 MOC 매도 ({splits}분할 1/{divisor})",
                 "t_target": 0.0,
