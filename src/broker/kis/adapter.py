@@ -25,7 +25,12 @@ from broker.base import (
     OrderError,
     OrderNotAcceptedError,
 )
-from broker.market_utils import get_kst_now, is_us_trading_day, normalize_order_price
+from broker.market_utils import (
+    get_kst_now,
+    is_us_trading_day,
+    normalize_order_price,
+    resolve_real_kst_from_ord,
+)
 from broker.kis.session import KISSession
 from broker.kis.auth import get_access_token
 from broker.kis.exchange import convert_exchange_code, get_api_exchange_code
@@ -451,6 +456,8 @@ class KISBroker(Broker):
                     ord_datetime_utc_iso = None
                     if ord_dt and ord_tmd:
                         try:
+                            # KIS quirk: 해외주식 inquire-ccnl은 ord_dt=미국(ET) 영업일, ord_tmd=KST 시각.
+                            # 상태 체인(last_updated)은 이 규칙을 그대로 유지해야 하므로 변환 방식을 바꾸지 않습니다.
                             kst_dt = datetime.strptime(ord_dt + ord_tmd, "%Y%m%d%H%M%S")
                             kst_dt = kst_dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
                             ord_datetime_kst_iso = kst_dt.isoformat()
@@ -498,23 +505,23 @@ class KISBroker(Broker):
 
                 print(f"[주문이력 요약] {symbol} 최근 {n}건 (간단 요약)")
                 for item in order_history[:n]:
-                    kst_iso = item.get("ord_datetime_kst")
-                    if kst_iso:
-                        try:
-                            kst_dt = datetime.fromisoformat(kst_iso)
-                            kst_str = kst_dt.strftime("%Y-%m-%d %H:%M:%S") + " KST"
-                        except Exception:
-                            kst_str = kst_iso
+                    ord_dt = item.get("ord_dt", "")
+                    ord_tmd = (item.get("ord_tmd") or "").zfill(6)
+
+                    # 미국 영업일 (KIS API 원본 ord_dt — 가공 없이 표시)
+                    if ord_dt and len(ord_dt) == 8:
+                        us_dt_str = f"{ord_dt[:4]}-{ord_dt[4:6]}-{ord_dt[6:8]}"
                     else:
-                        ord_dt = item.get("ord_dt", "")
-                        ord_tmd = (item.get("ord_tmd") or "").zfill(6)
-                        if ord_dt and len(ord_dt) == 8 and ord_tmd:
-                            try:
-                                kst_str = f"{ord_dt[:4]}-{ord_dt[4:6]}-{ord_dt[6:8]} {ord_tmd[:2]}:{ord_tmd[2:4]}:{ord_tmd[4:6]} KST"
-                            except Exception:
-                                kst_str = f"{ord_dt} {ord_tmd}"
-                        else:
-                            kst_str = "(시간없음)"
+                        us_dt_str = "(날짜없음)"
+
+                    # 실제 한국 시각 (ord_dt=미국영업일 + ord_tmd=KST → 복원)
+                    real_kst = None
+                    if ord_dt and ord_tmd:
+                        real_kst = resolve_real_kst_from_ord(ord_dt, ord_tmd)
+                    if real_kst:
+                        kst_str = real_kst.strftime("%Y-%m-%d %H:%M:%S") + " KST"
+                    else:
+                        kst_str = "(시간없음)"
 
                     odno = item.get("odno", "")
                     side = item.get("sll_buy_dvsn_cd_name", "")
@@ -531,7 +538,7 @@ class KISBroker(Broker):
                     except Exception:
                         amt_s = amt
 
-                    print(f"{kst_str} | odno={odno} | {side} | qty={qty} | price={price_s} | amt={amt_s}")
+                    print(f"미국영업일 {us_dt_str} | 한국시각 {kst_str} | odno={odno} | {side} | qty={qty} | price={price_s} | amt={amt_s}")
 
             return order_history
 

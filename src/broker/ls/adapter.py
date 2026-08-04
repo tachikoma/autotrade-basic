@@ -33,7 +33,12 @@ from broker.base import (
     OrderError,
     OrderNotAcceptedError,
 )
-from broker.market_utils import get_kst_now, is_us_trading_day, normalize_order_price
+from broker.market_utils import (
+    get_kst_now,
+    is_us_trading_day,
+    normalize_order_price,
+    resolve_real_kst_from_ord,
+)
 from broker.ls.auth import get_access_token
 from broker.ls.exchange import (
     convert_exchange_code,
@@ -662,6 +667,9 @@ class LSBroker(Broker):
                     ord_datetime_utc_iso = None
                     if ord_dt and ord_tmd:
                         try:
+                            # LS quirk: 해외주식 체결내역(ord_dt)은 미국(ET) 영업일.
+                            # 상태 체인(last_updated)은 이 규칙을 유지해야 하므로
+                            # 표시용 보정만 별도 수행 → ord_datetime_utc 미변경.
                             kst_dt = datetime.strptime(
                                 ord_dt + ord_tmd, "%Y%m%d%H%M%S"
                             )
@@ -719,32 +727,32 @@ class LSBroker(Broker):
                 except Exception:
                     n = 100
                 n = min(n, len(order_history))
-
                 print(f"[주문이력 요약] {symbol} 최근 {n}건")
                 for item in order_history[:n]:
-                    kst_iso = item.get("ord_datetime_kst")
-                    if kst_iso:
-                        try:
-                            kst_dt = datetime.fromisoformat(kst_iso)
-                            kst_str = kst_dt.strftime("%Y-%m-%d %H:%M:%S") + " KST"
-                        except Exception:
-                            kst_str = kst_iso
+                    ord_dt = item.get("ord_dt", "")
+                    ord_tmd = (item.get("ord_tmd") or "").zfill(6)
+
+                    # 미국 영업일 (KIS API 원본 ord_dt — 가공 없이 표시)
+                    if ord_dt and len(ord_dt) == 8:
+                        us_dt_str = f"{ord_dt[:4]}-{ord_dt[4:6]}-{ord_dt[6:8]}"
                     else:
-                        ord_dt = item.get("ord_dt", "")
-                        ord_tmd = (item.get("ord_tmd") or "").zfill(6)
-                        if ord_dt and len(ord_dt) == 8 and ord_tmd:
-                            kst_str = (
-                                f"{ord_dt[:4]}-{ord_dt[4:6]}-{ord_dt[6:8]} "
-                                f"{ord_tmd[:2]}:{ord_tmd[2:4]}:{ord_tmd[4:6]} KST"
-                            )
-                        else:
-                            kst_str = "(시간없음)"
+                        us_dt_str = "(날짜없음)"
+
+                    # 실제 한국 시각 (ord_dt=미국영업일 + ord_tmd=KST → 복원)
+                    real_kst = None
+                    if ord_dt and ord_tmd:
+                        real_kst = resolve_real_kst_from_ord(ord_dt, ord_tmd)
+                    if real_kst:
+                        kst_str = real_kst.strftime("%Y-%m-%d %H:%M:%S") + " KST"
+                    else:
+                        kst_str = "(시간없음)"
 
                     odno = item.get("odno", "")
                     side = item.get("sll_buy_dvsn_cd_name", "")
                     qty = item.get("ft_ccld_qty", "0")
                     price = item.get("ft_ccld_unpr3", "0")
                     amt = item.get("ft_ccld_amt3", "0")
+
                     try:
                         price_s = f"{float(price):.2f}"
                     except Exception:
@@ -753,11 +761,11 @@ class LSBroker(Broker):
                         amt_s = f"{float(amt):.2f}"
                     except Exception:
                         amt_s = amt
-                    print(
-                        f"{kst_str} | odno={odno} | {side}"
-                        f" | qty={qty} | price={price_s} | amt={amt_s}"
-                    )
 
+                    print(
+                        f"미국영업일 {us_dt_str} | 한국시각 {kst_str} | odno={odno}"
+                        f" | {side} | qty={qty} | price={price_s} | amt={amt_s}"
+                    )
             return order_history
 
         except requests.exceptions.RequestException as e:

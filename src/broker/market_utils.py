@@ -18,6 +18,32 @@ def get_kst_now() -> datetime:
     return datetime.now(ZoneInfo("Asia/Seoul"))
 
 
+def resolve_real_kst_from_ord(ord_dt: str, ord_tmd: str):
+    """KIS 계열(주문일=미국 영업일, 주문시각=KST) 주문이력의 실제 한국 시각을 복원합니다.
+
+    한국 증권사(KIS/LS/키움) 해외주식 주문이력 API는 ord_dt=미국(ET) 영업일,
+    ord_tmd=KST 시각을 반환합니다. 봇이 장중(KST 자정 전후) 주문하므로 KST
+    날짜는 ord_dt 또는 ord_dt+1입니다. 후보 KST 시각을 ET로 되돌렸을 때
+    날짜가 ord_dt와 일치하는 후보를 선택합니다.
+
+    실패 시 None을 반환합니다.
+    """
+    kst_tz = ZoneInfo("Asia/Seoul")
+    et_tz = ZoneInfo("America/New_York")
+    for offset_days in (0, 1):
+        try:
+            candidate = datetime.strptime(ord_dt + ord_tmd, "%Y%m%d%H%M%S")
+            candidate = candidate.replace(tzinfo=kst_tz) + timedelta(days=offset_days)
+            if candidate.astimezone(et_tz).strftime("%Y%m%d") == ord_dt:
+                return candidate
+        except Exception:
+            continue
+    try:
+        return datetime.strptime(ord_dt + ord_tmd, "%Y%m%d%H%M%S").replace(tzinfo=kst_tz)
+    except Exception:
+        return None
+
+
 def normalize_order_price(price) -> float:
     """
     미국 주식 호가 단위 규칙에 맞춰 주문가를 정규화합니다 (버림).

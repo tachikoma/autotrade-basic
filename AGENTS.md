@@ -121,6 +121,26 @@ uv run pytest tests/ -v
 - **주문 시각**: 모든 브로커에서 `get_kst_now()` 사용 (API 응답 시간 미사용)
 - **KIS ODNO 정규화**: 주문 접수 API는 leading zero 10자리(`0000052248`), 체결 조회는 trimmed(`52248`) 반환 → `kis/adapter.py`에서 `str(int(odno))`로 정규화 후 반환 (다른 브로커는 해당 없음)
 - **KIWOOM 모의투자 주문이력(ust21150)**: 날짜별 개별 조회, 빈 결과/`501724` 에러 시 `[정보]` 로그 출력 (line 534-545)
+- **해외주식 주문이력 날짜/시각 컨벤션 (`ord_dt` vs KST)** — `kis/ls/kiwoom/toss` 어댑터의
+  `[주문이력 요약]` 출력용 참고사항. 상태 체인(`ord_datetime_utc`/`last_updated`)은 **절대 수정하지 말 것**.
+  - KIS/LS/KIWOOM-실전 해외주문 조회 응답의 `ord_dt`는 **미국(ET) 영업일**, `ord_tmd`는 **한국(KST) 시각**.
+    봇은 KST 장중(대개 04:10경, 현지 시간으로는 전일 15:xx) 주문하므로 실제 KST 날짜 = `ord_dt+1`.
+    → `[주문이력 요약]`은 `미국영업일 YYYY-MM-DD | 한국시각 YYYY-MM-DD HH:MM:SS KST | odno=…` 형태로 복원 표시.
+  - **상태 체인 비변경 (display-only fix)**: `ord_datetime_kst_iso`/`ord_datetime_utc_iso`(상태 저장용)는
+    기존 식(ord_dt를 그대로 KST로 해석 → +24h shift)을 유지. `last_updated`는 항상 `ord_datetime_utc`에서
+    파생되므로 모든 시간 비교는 동일 convention 간 비교 → 순서·포함 여부 정확, **T 계산에 영향 없음**.
+    (검증: `trading_bot.py`에 fill-vs-`now()` 비교 없음; `state.py:143`의 `datetime.now(UTC)`는
+    `last_updated` 빈 값(초기 모드) fallback 전용.)
+  - `resolve_real_kst_from_ord` (`broker/market_utils.py`): ord_dt(미국영업일)+ord_tmd(KST) → 실제 KST 복원.
+    KST 후보를 ET로 round-trip해 날짜가 ord_dt와 일치하면 선택, 후보 없으면 offset=0(KST) fallback, 실패 시 None.
+  - **브로커별 검증 상태**:
+    - KIS: ✅ 실전 로그 검증 완료 (odno=45025: `20260731 041046` → 실제 KST `2026-08-01 04:10:46`).
+    - TOSS: ✅ `orderedAt`이 timezone-aware ISO8601(`+09:00`) → 이미 정확한 KST → 보정 불필요.
+    - KIWOOM 모의(ust21150): ✅ `ord_dt`는 봇 루프가 KST 날짜로 주입 → 표시 정확 → 보정 불필요.
+    - LS 실전 / KIWOOM 실전(ust21100): ⚠️ **미실증** — KIS·LS·KIOM 공통 해외주식 API 컨벤션에서
+      `ord_dt=미국영업일`을 추정 중이나, CI가 실제 체결(fill)을 생산하지 않음.
+      `resolve_real_kst_from_ord` 보정은 display-only이므로 안전하나, 실전 배포 전
+      반드시 실전 API 응답으로 `ord_dt` 의미를 1회 검증할 것.
 - **ORDER_HISTORY_VERBOSE=true**: LIVE 모드에서도 `[주문이력 요약]` 상세 출력 (DRY는 항상 출력). KIS/KIWOOM/LS/TOSS 공통
 - **T 보정 환경변수**:
   - `FORCE_T_REINFERENCE=true`: `last_updated` 초기화 → 전체 이력(90일)에서 T 재추정 (LIVE→DRY 자동 전환)

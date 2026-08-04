@@ -34,7 +34,12 @@ from broker.base import (
     OrderError,
     OrderNotAcceptedError,
 )
-from broker.market_utils import get_kst_now, is_us_trading_day, normalize_order_price
+from broker.market_utils import (
+    get_kst_now,
+    is_us_trading_day,
+    normalize_order_price,
+    resolve_real_kst_from_ord,
+)
 from broker.kiwoom.session import KiwoomSession
 from broker.kiwoom.auth import get_access_token
 from broker.kiwoom.exchange import get_api_exchange_code
@@ -245,11 +250,26 @@ class KiwoomBroker(Broker):
             except Exception:
                 pass
 
+        # 키움 실전(ust21100)의 ord_dt는 미국(ET) 영업일 → 표시용 보정.
+        # (ord_dt가 실제 미국영업일이 아닌 경우, resolve_real_kst_from_ord가
+        # 1970-01-01 기반 round-trip을 하지 않으므로 의미 없는 날짜가 아니면
+        # ord_datetime_kst_iso(미리 보정값)와 동일값을 그대로 씁니다.)
+        resolved_kst_iso = None
+        if ord_dt and ord_tmd:
+            try:
+                resolved_kst = resolve_real_kst_from_ord(ord_dt, ord_tmd)
+                if resolved_kst is not None:
+                    resolved_kst_iso = resolved_kst.isoformat()
+            except Exception:
+                pass
+
         return {
             "ord_dt": ord_dt,
             "ord_tmd": ord_tmd_raw,
             "ord_datetime_kst": ord_datetime_kst_iso,
             "ord_datetime_utc": ord_datetime_utc_iso,
+            "_ord_dt_is_us_trading_date": True,
+            "_resolved_kst_iso": resolved_kst_iso,
             "prdt_name": raw.get("prdt_name", ""),
             "sll_buy_dvsn_cd_name": raw.get("sll_buy_dvsn_cd_name", ""),
             "ft_ord_qty": raw.get("ft_ord_qty", "0"),
@@ -302,6 +322,10 @@ class KiwoomBroker(Broker):
             "ord_tmd": ord_tmd,
             "ord_datetime_kst": ord_datetime_kst_iso,
             "ord_datetime_utc": ord_datetime_utc_iso,
+            # 키움 모의(ust21150): ord_dt는 봇 요청 루프에서 KST 날짜로 주입 →
+            # 미국영업일 round-trip 불필요. 모의 표시는 ord_datetime_kst 그대로.
+            "_ord_dt_is_us_trading_date": False,
+            "_resolved_kst_iso": ord_datetime_kst_iso,
             "prdt_name": raw.get("frgn_stk_nm", ""),
             "sll_buy_dvsn_cd_name": raw.get("slby_tp_nm", ""),
             "ft_ord_qty": raw.get("ord_qty", "0"),
@@ -665,26 +689,30 @@ class KiwoomBroker(Broker):
 
             print(f"[주문이력 요약] {symbol} 최근 {n}건 (간단 요약)")
             for item in order_history[:n]:
-                kst_iso = item.get("ord_datetime_kst")
-                if kst_iso:
+                ord_dt = item.get("ord_dt", "")
+                ord_tmd = (item.get("ord_tmd") or "")
+
+                # ord_dt 의미: 키움 실전 = 미국(ET) 영업일, 모의 = 봇 조회 KST날짜
+                is_us = item.get("_ord_dt_is_us_trading_date", False)
+                if ord_dt and len(ord_dt) == 8:
+                    date_header = (
+                        "미국영업일" if is_us else "한국영업일"
+                    )
+                    date_str = f"{ord_dt[:4]}-{ord_dt[4:6]}-{ord_dt[6:8]}"
+                else:
+                    date_header = "거래일"
+                    date_str = "(날짜없음)"
+
+                # 실제 한국 시각
+                resolved = item.get("_resolved_kst_iso")
+                if resolved:
                     try:
-                        kst_dt = datetime.fromisoformat(kst_iso)
+                        kst_dt = datetime.fromisoformat(resolved)
                         kst_str = kst_dt.strftime("%Y-%m-%d %H:%M:%S") + " KST"
                     except Exception:
-                        kst_str = kst_iso
+                        kst_str = resolved
                 else:
-                    ord_dt = item.get("ord_dt", "")
-                    ord_tmd = (item.get("ord_tmd") or "").zfill(6)
-                    if ord_dt and len(ord_dt) == 8 and ord_tmd:
-                        try:
-                            kst_str = (
-                                f"{ord_dt[:4]}-{ord_dt[4:6]}-{ord_dt[6:8]} "
-                                f"{ord_tmd[:2]}:{ord_tmd[2:4]}:{ord_tmd[4:6]} KST"
-                            )
-                        except Exception:
-                            kst_str = f"{ord_dt} {ord_tmd}"
-                    else:
-                        kst_str = "(시간없음)"
+                    kst_str = "(시간없음)"
 
                 odno = item.get("odno", "")
                 side = item.get("sll_buy_dvsn_cd_name", "")
@@ -701,7 +729,10 @@ class KiwoomBroker(Broker):
                 except Exception:
                     amt_s = amt
 
-                print(f"{kst_str} | odno={odno} | {side} | qty={qty} | price={price_s} | amt={amt_s}")
+                print(
+                    f"{date_header} {date_str} | 한국시각 {kst_str} | odno={odno}"
+                    f" | {side} | qty={qty} | price={price_s} | amt={amt_s}"
+                )
 
         return order_history
 
