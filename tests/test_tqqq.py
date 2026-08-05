@@ -12,6 +12,10 @@ sys.path.insert(0, str(project_root / "src"))
 
 from broker.kis.adapter import KISBroker
 
+import pytest
+
+pytestmark = pytest.mark.kis
+
 
 def test_tqqq_order_history():
     """

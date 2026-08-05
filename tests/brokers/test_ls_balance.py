@@ -16,6 +16,10 @@ from broker.ls.adapter import LSBroker
 from broker.ls.order_types import TR_ID_BALANCE
 from tests.brokers.base import dump_json, print_separator
 
+import pytest
+
+pytestmark = pytest.mark.ls
+
 
 def _raw_balance_request(
     broker: LSBroker,

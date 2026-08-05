@@ -210,7 +210,7 @@ def _parse_symbols():
 SYMBOLS = _parse_symbols()
 
 # 계좌 정보
-ACNT_PRDT_CD = BROKER_CONFIG.get("acnt_prdt_cd", "01")  # 계좌상품코드 (상품코드)
+# ACNT_PRDT_CD는 파일 하단의 하위호환 alias 섹션에서 "01" 고정값으로 정의합니다 (KIS 전용).
 
 # 거래 모드
 # 환경변수에서 값을 읽어 대문자로 정규화하고 유효성 검사 수행
@@ -266,13 +266,22 @@ ORDER_HISTORY_VERBOSE = os.getenv("ORDER_HISTORY_VERBOSE", "false").strip().lowe
 LS_DEMO_BYPASS_BUGS = os.getenv("LS_DEMO_BYPASS_BUGS", "false").strip().lower() == "true"
 
 # ── 하위호환 alias (기존 import 경로 유지) ──
+# 주의: BROKER_CONFIG 경유가 아니라 KIS_* 환경변수에서 직접 읽습니다.
+#   → .env의 BROKER 값이 다른 브로커여도 KIS 자격증명이 설정돼 있으면
+#     KISBroker/KIS auth가 정상 동작합니다 (BROKER 값과 무관).
+#   BROKER=kis일 때는 기존과 동일한 값이므로 런타임 봇 동작은 불변입니다.
 KIS_MODE = BROKER_MODE
-KIS_DOMAIN = BROKER_CONFIG.get("domain", "")
-KIS_APP_KEY = BROKER_CONFIG.get("app_key", "")
-KIS_APP_SECRET = BROKER_CONFIG.get("app_secret", "")
-KIS_ACCOUNT_NO = BROKER_CONFIG.get("account_no", "")
+KIS_APP_KEY = os.getenv("KIS_APP_KEY", "")
+KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", "")
+KIS_ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
+KIS_DOMAIN = (
+    "https://openapi.koreainvestment.com:9443"
+    if BROKER_MODE == "real"
+    else "https://openapivts.koreainvestment.com:29443"
+)
 KIS_TIMEOUT = HTTP_TIMEOUT
 KIS_CONNECT_TIMEOUT = CONNECT_TIMEOUT
 KIS_READ_TIMEOUT = READ_TIMEOUT
+ACNT_PRDT_CD = "01"  # KIS 계좌상품코드 (고정값, BROKER_CONFIG 경유 제거)
 
 

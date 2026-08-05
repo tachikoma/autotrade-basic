@@ -1,21 +1,38 @@
 """
-해외주식 주문 테스트 스크립트
+해외주식 주문 테스트 스크립트 (KIS 전용)
 
 이 스크립트는 해외주식 주문 함수를 테스트합니다.
 - TQQQ 종목을 LIMIT 주문과 LOC 주문으로 테스트
 - 현재가 API를 호출하여 실제 가격으로 주문
 - TRADE_MODE에 따라 DRY 또는 LIVE 모드로 실행
+
+다른 브로커(키움/토스 등)의 주문 테스트는 각 브로커별 테스트 파일이 있으므로,
+이 파일은 KIS로 고정합니다. DRY 모드에서는 DryBroker로 래핑해 실제 주문을 방지합니다.
 """
 
 import sys
-sys.path.append("src")
+from pathlib import Path
 
-from broker import create_broker
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+import pytest
+from broker.base import DryBroker
+from broker.kis.adapter import KISBroker
 from config import SYMBOLS, TRADE_MODE
 
 
 TEST_SYMBOL = SYMBOLS[0]["symbol"]
 TEST_EXCHANGE = SYMBOLS[0]["exchange"]
+
+pytestmark = pytest.mark.kis
+
+
+def _make_kis_broker():
+    """DRY 모드면 DryBroker로 래핑한 KIS broker를 반환합니다."""
+    broker = KISBroker()
+    if TRADE_MODE == "DRY":
+        return DryBroker(broker)
+    return broker
 
 
 def test_overseas_order():
@@ -41,7 +58,7 @@ def test_overseas_order():
         # Step 1: 현재가 조회
         print(f"\n[Step 1] {TEST_SYMBOL} 현재가 조회 중...")
         
-        broker = create_broker()
+        broker = _make_kis_broker()
         order_exchange_code = broker.exchange_code(TEST_EXCHANGE)
         
         price_data = broker.get_stock_price(TEST_SYMBOL, TEST_EXCHANGE)

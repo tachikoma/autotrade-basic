@@ -24,6 +24,10 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from broker.toss.adapter import TossBroker
 from tests.brokers.base import dump_json, print_separator
 
+import pytest
+
+pytestmark = pytest.mark.toss
+
 # DRY 모드에서는 주문 요청 본문만 출력하고 실제 POST는 건너뜀
 _DRY = os.environ.get("TRADE_MODE", "").upper() == "DRY"
 

@@ -28,15 +28,15 @@ if _src_path not in sys.path:
 import pytest
 from config import SYMBOLS
 
+# 자격증명 기반 필터로 일원화 — BROKER env 값과 무관하게
+# KIWOOM_APP_KEY/SECRET이 설정돼 있으면 tests/conftest.py가 실행시킵니다.
+pytestmark = pytest.mark.kiwoom
 
-@pytest.mark.skipif(
-    os.environ.get("BROKER") != "kiwoom",
-    reason="BROKER=kiwoom 환경변수가 필요합니다",
-)
+
 class TestKiwoomSymbolOrderHistory:
     """
     키움증권 해외주식 주문체결내역 조회 테스트.
-    BROKER=kiwoom 환경변수 필수.
+    KIWOOM 자격증명(KIWOOM_APP_KEY/SECRET) 필요.
     """
 
     TEST_SYMBOL = SYMBOLS[0]["symbol"]

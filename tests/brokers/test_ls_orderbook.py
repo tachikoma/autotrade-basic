@@ -25,6 +25,10 @@ from broker.ls.exchange import convert_exchange_code, build_symbol
 
 from tests.brokers.base import dump_json, print_separator
 
+import pytest
+
+pytestmark = pytest.mark.ls
+
 
 def _raw_orderbook_request(
     broker: LSBroker,

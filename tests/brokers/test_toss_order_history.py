@@ -17,6 +17,10 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from broker.toss.adapter import TossBroker
 from tests.brokers.base import dump_json, print_separator
 
+import pytest
+
+pytestmark = pytest.mark.toss
+
 
 def _raw_order_history_request(
     broker: TossBroker,

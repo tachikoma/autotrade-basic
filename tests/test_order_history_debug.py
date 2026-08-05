@@ -17,6 +17,10 @@ from broker.kis.auth import get_access_token
 import requests
 from datetime import datetime, timedelta
 
+import pytest
+
+pytestmark = pytest.mark.kis
+
 
 def test_all_order_history_debug():
     """

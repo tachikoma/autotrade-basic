@@ -16,6 +16,10 @@ sys.path.insert(0, str(project_root / "src"))
 from broker.kis.adapter import KISBroker
 from config import SYMBOLS
 
+import pytest
+
+pytestmark = pytest.mark.kis
+
 
 TEST_SYMBOL = SYMBOLS[0]["symbol"]
 TEST_EXCHANGE = SYMBOLS[0]["exchange"]

@@ -62,13 +62,16 @@ KIWOOM_CREDENTIALS_AVAILABLE = all([
     os.getenv("KIWOOM_APP_SECRET"),
 ])
 
-pytestmark = pytest.mark.skipif(
-    not KIWOOM_CREDENTIALS_AVAILABLE,
-    reason=(
-        "KIWOOM_APP_KEY / KIWOOM_APP_SECRET "
-        "환경변수가 설정되지 않았습니다."
+pytestmark = [
+    pytest.mark.skipif(
+        not KIWOOM_CREDENTIALS_AVAILABLE,
+        reason=(
+            "KIWOOM_APP_KEY / KIWOOM_APP_SECRET "
+            "환경변수가 설정되지 않았습니다."
+        ),
     ),
-)
+    pytest.mark.kiwoom,
+]
 
 # ═══════════════════════════════════════════════════════════════════════
 # 테스트 상수

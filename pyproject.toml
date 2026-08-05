@@ -10,3 +10,13 @@ dependencies = [
     "exchange-calendars>=4.13.2",
     "pyyaml>=6.0.3",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "kis: KIS 실 API 통합 테스트 (KIS_APP_KEY/SECRET/ACCOUNT_NO 필요)",
+    "kiwoom: KIWOOM 실 API 통합 테스트 (KIWOOM_APP_KEY/SECRET 필요)",
+    "ls: LS 실 API 통합 테스트 (LS_APP_KEY/SECRET 필요)",
+    "toss: TOSS 실 API 통합 테스트 (TOSS_APP_KEY/SECRET 필요)",
+    "live_order: 실제 주문이 발생하는 위험 테스트",
+]

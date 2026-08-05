@@ -7,6 +7,7 @@ LS증권 OPEN API 인증 방식:
 - Parameters: grant_type=client_credentials, appkey, appsecretkey, scope=oob
 - 토큰 유효기간: 발급일 익일 07시까지 (KIS는 24시간)
 """
+import os
 import random
 import time
 
@@ -14,14 +15,15 @@ import certifi
 import requests
 
 from config import (
-    BROKER_CONFIG,
     HTTP_TIMEOUT,
 )
 
 # Base URL (실전/모의 동일, AppKey로 환경 구분)
-BASE_URL = BROKER_CONFIG.get("domain", "https://openapi.ls-sec.co.kr:8080")
-LS_APP_KEY = BROKER_CONFIG.get("app_key", "")
-LS_APP_SECRET = BROKER_CONFIG.get("app_secret", "")
+# 자격증명은 BROKER_CONFIG(BROKER env 기반)가 아니라 LS_* 환경변수에서 직접 읽습니다.
+#   → .env의 BROKER 값과 무관하게 LS 자격증명이 설정돼 있으면 정상 동작합니다.
+BASE_URL = "https://openapi.ls-sec.co.kr:8080"
+LS_APP_KEY = os.environ.get("LS_APP_KEY", "")
+LS_APP_SECRET = os.environ.get("LS_APP_SECRET", "")
 
 # 발급받은 토큰을 캐시하는 전역 변수
 _cached_token = None

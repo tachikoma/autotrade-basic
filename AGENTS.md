@@ -99,7 +99,21 @@ TQQQ_FORCE_T=29 SOXL_FORCE_T=20 TRADE_MODE=DRY uv run python trading_bot.py
 SOXL_MAX_T=19 FORCE_T_REINFERENCE=true uv run python trading_bot.py
 
 # 테스트 실행
-uv run pytest tests/ -v
+# 브로커 실 API 통합 테스트는 pytest 마커(kis/kiwoom/ls/toss)로 구분됩니다.
+# tests/conftest.py가 .env 자격증명만으로 실행 여부를 판단합니다 — BROKER 값과 무관하게
+# 해당 브로커 키가 설정돼 있으면 실행되고, 없으면 자동 skip됩니다.
+# 마커 없는 유닛/모의 테스트는 항상 실행됩니다.
+uv run pytest tests/ -v                          # 키 설정된 브로커 통합 테스트 + 유닛
+uv run pytest tests/ -m kis -v                   # 특정 브로커만 (kis/kiwoom/ls/toss)
+uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증명 기준으로 동작
+
+# 참고: 브로커별 필수 자격증명
+#   kis   = KIS_APP_KEY + KIS_APP_SECRET + KIS_ACCOUNT_NO
+#   kiwoom= KIWOOM_APP_KEY + KIWOOM_APP_SECRET
+#   ls    = LS_APP_KEY + LS_APP_SECRET
+#   toss  = TOSS_APP_KEY + TOSS_APP_SECRET
+# 유닛/모의 테스트(test_broker_contract, test_reverse_mode, test_state_t_updates 등)는
+# API를 호출하지 않아 자격증명 없이 항상 실행됩니다.
 ```
 
 ## COMMUNICATION RULES

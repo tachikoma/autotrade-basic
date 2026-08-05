@@ -7,6 +7,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from broker.kis.adapter import KISBroker
 
+import pytest
+
+pytestmark = pytest.mark.kis
+
 
 def test_tqqq_price_inquiry():
     """

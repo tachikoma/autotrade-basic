@@ -125,6 +125,28 @@ TRADE_MODE=LIVE uv run python trading_bot.py
 | 대상 종목 | 1개 (TEST_SYMBOL 또는 SYMBOLS[0]) | SYMBOLS 전체 |
 | 목적 | **전략 what-if 검증** | **운영 자동매매** |
 
+### 3. 테스트 — `pytest`
+
+브로커 실 API 통합 테스트는 pytest 마커(`kis`/`kiwoom`/`ls`/`toss`)로 구분됩니다.
+`tests/conftest.py`가 `.env`의 자격증명 유무만으로 실행 여부를 판단하므로,
+**BROKER 값과 무관하게** 해당 브로커 키가 설정돼 있으면 실행되고 없으면 자동 skip됩니다.
+마커 없는 유닛/모의 테스트는 항상 실행됩니다.
+
+```bash
+uv run pytest tests/ -v                          # 키 설정된 브로커 통합 테스트 + 유닛
+uv run pytest tests/ -m kis -v                   # 특정 브로커만 (kis/kiwoom/ls/toss)
+uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증명 기준으로 동작
+```
+
+참고 — 브로커별 필수 자격증명:
+
+| 마커 | 필수 환경변수 |
+|------|--------------|
+| `kis` | `KIS_APP_KEY` + `KIS_APP_SECRET` + `KIS_ACCOUNT_NO` |
+| `kiwoom` | `KIWOOM_APP_KEY` + `KIWOOM_APP_SECRET` |
+| `ls` | `LS_APP_KEY` + `LS_APP_SECRET` |
+| `toss` | `TOSS_APP_KEY` + `TOSS_APP_SECRET` |
+
 ---
 
 ## 상태 관리

@@ -17,6 +17,10 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from broker.toss.adapter import TossBroker
 from tests.brokers.base import dump_json, print_separator
 
+import pytest
+
+pytestmark = pytest.mark.toss
+
 
 def _raw_holdings_request(broker: TossBroker, symbol: str) -> dict:
     """토스 보유잔고 API를 직접 호출하여 raw 응답을 반환합니다."""
