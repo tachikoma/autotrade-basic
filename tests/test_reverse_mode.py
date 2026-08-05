@@ -1,7 +1,79 @@
 from copy import deepcopy
+from unittest.mock import MagicMock
 
 from state import reconcile_reverse_fills, update_T_from_history
 from strategy import execute_reverse_mode
+
+
+class _FakeQuotation:
+    tradable = True
+
+
+class _FakePrice:
+    def __init__(self, last):
+        self.open = last
+        self.last = last
+
+
+class _FakeBalance:
+    def __init__(self, qty, avg):
+        self.quantity = qty
+        self.avg_price = avg
+
+
+class _FakePurchaseAmount:
+    def __init__(self, cash):
+        self.orderable_cash = cash
+
+
+def _make_broker_mock(last_price, position_qty, avg_price, orderable_cash):
+    broker = MagicMock()
+    broker.get_stock_quotation.return_value = _FakeQuotation()
+    broker.get_stock_price.return_value = _FakePrice(last_price)
+    broker.get_balance.return_value = _FakeBalance(position_qty, avg_price)
+    broker.get_purchase_amount.return_value = _FakePurchaseAmount(orderable_cash)
+    return broker
+
+
+def test_reverse_entry_at_t_between_splits_minus_one_and_splits(monkeypatch):
+    """T > 분할수-1 (20분할 T=19.5) → 리버스모드 진입, 1일차 MOC 매도."""
+    monkeypatch.setattr("strategy.get_finnhub_ma5", lambda symbol: None)
+    from strategy import 무한매수법_V4
+
+    state = {"T": 19.5, "reverse_mode": {}, "close_prices": [50.0]}
+    broker = _make_broker_mock(
+        last_price=50.0, position_qty=100, avg_price=100.0, orderable_cash=1000.0
+    )
+
+    result = 무한매수법_V4(
+        broker, symbol="SOXL", exchange_code="NYS", splits=20, symbol_type="SOXL",
+        seed=0, T=19.5, state=state,
+    )
+
+    assert result["orders"], "리버스 진입 시 주문이 있어야 합니다"
+    assert result["orders"][0]["order_type"] == "MOC"
+    assert result["T"] == round(19.5 * 0.9, 4)
+
+
+def test_no_reverse_entry_at_t_equal_to_splits_minus_one(monkeypatch):
+    """T == 분할수-1 (20분할 T=19.0) → 일반모드 유지 (MOC 없음, T 유지)."""
+    monkeypatch.setattr("strategy.get_finnhub_ma5", lambda symbol: None)
+    from strategy import 무한매수법_V4
+
+    state = {"T": 19.0, "reverse_mode": {}, "close_prices": [50.0]}
+    broker = _make_broker_mock(
+        last_price=50.0, position_qty=100, avg_price=100.0, orderable_cash=1000.0
+    )
+
+    result = 무한매수법_V4(
+        broker, symbol="SOXL", exchange_code="NYS", splits=20, symbol_type="SOXL",
+        seed=0, T=19.0, state=state,
+    )
+
+    assert result["T"] == 19.0
+    assert result["orders"], "일반모드에서도 주문은 생성되어야 합니다"
+    assert all(order["order_type"] != "MOC" for order in result["orders"])
+    assert not any("리버스" in order.get("comment", "") for order in result["orders"])
 
 
 def test_reverse_mode_advances_one_day_per_execution(monkeypatch):

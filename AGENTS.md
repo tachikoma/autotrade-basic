@@ -75,7 +75,7 @@ autotrade-basic/
 - T값(float)이 누적 매수 횟수를 나타내는 독특한 상태 관리
 - 모의/실전 TR_ID를 KIS_MODE에 따라 동적 전환
 - DRY 모드에서는 주문 출력만 하고 실행하지 않으며, 리버스모드 상태도 복사본으로 계산해 캐시에 진행 상태를 저장하지 않음
-- 리버스모드(`execute_reverse_mode()`): T≥분할수 시 발동, 5일 MA 별지점 기반 무한매도+쿼터매수
+- 리버스모드(`execute_reverse_mode()`): T>분할수-1 시 발동, 5일 MA 별지점 기반 무한매도+쿼터매수
 - T값 환경변수 보정: `FORCE_T_REINFERENCE`, `{SYMBOL}_FORCE_T`, `{SYMBOL}_MAX_T` (기본 MAX_T=분할수, 리버스모드 진입용 `T=splits` 허용)
 
 ## COMMANDS
@@ -150,14 +150,15 @@ uv run pytest tests/ -v
   - ⚠️ `{SYMBOL}_FORCE_T`는 **1회성 점화용**입니다. 보정 RUN 1회 실행 후 env var를 **즉시 삭제**하세요. 리버스모드 진행은 `day_count`(state `reverse_mode`)와 체결 이력 기반 T 갱신이 주도하므로 FORCE_T 불필요. 유지하면 리버스모드 종료 → 새 사이클(T=0)에서 T를 다시 `splits`로 강제해 **새 사이클 매수가 영구 차단**됩니다.
   - ⚠️ GH Actions 캐시는 **브랜치별 격리**입니다. `develop` 수동 RUN에서 보정해도 `main`(repository_dispatch) RUN의 캐시에는 반영되지 않습니다. T 보정은 반드시 운영 브랜치(`main`)에서 실행하세요.
 - **리버스모드** (`src/strategy.py execute_reverse_mode()`):
-  - 발동: `T >= splits` + position > 0
+  - 발동: `T > splits - 1` + position > 0 (20분할 T>19, 40분할 T>39 — 원본 규칙: 마지막 1회 매수도 불가능한 상태)
   - 1일차: MOC 매도 (보유량 1/10(20분할) or 1/20(40분할)) → T × 0.9/0.95 (MOC 가격은 `adjust_price_to_tick()`으로 호가 단위 보정 후 전달)
   - 2일차+: LOC 매도 @5일MA + 실제 주문가능금액 기준 쿼터매수 @별지점-0.01
   - 리버스모드 날짜는 실행당 1회만 증가하며, DRY 실행으로 저장 상태를 진행시키지 않음
   - 같은 실행에서 제출한 매도 주문의 예정 매도대금은 매수 가능금액으로 선반영하지 않음
+  - **쿼터매수 잔금**: broker `orderable_cash`(주문가능금액)만 사용하며 `reverse_mode.cumulative_sell_proceeds`를 합산하지 않음 — **의도적 보수 설계** (정산 매도대금은 broker가 `orderable_cash`에 반영함을 전제, `test_reverse_mode.py:50-76`로 고정). 원본(매도금 누적 합산)과 달리 하락장에서 덜 매수 = 더 안전한 쪽
   - T 갱신은 실제 체결 이력 반영을 기준으로 하며, 전략의 T 계산값만으로 저장하지 않음
-  - 종료 조건: 종가 > 평단×(1-0.15)(TQQQ) or ×(1-0.20)(SOXL)
-  - 별지점: Finnhub 5일 MA → close_prices(state) → last_price fallback
+  - 종료 조건: 종가 > 평단×(1-0.15)(TQQQ) or ×(1-0.20)(SOXL) — 판정은 `last_price`(실시간/최신가) 기준. 런 타이밍: **실전=pre장**(직전 종가 근사), **모의=장 후반**(당일 종가 근사). pre-market이 라이브 시세를 반환하면 종가와 달라질 수 있어 broker별 1회 DRY 검증 필요
+  - 별지점: Finnhub 5일 MA → close_prices(state) → last_price fallback (fallback 시 `[경고]` 로그 출력)
 - **STATE_DIAGNOSTIC_ONLY=true**: GitHub Actions 캐시의 T/reverse_mode 상태만 출력하고 브로커 API, 전략, 주문을 실행하지 않음. 일회성 진단 후 즉시 해제
 - **STATE_REPAIR_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 리버스 상태를 1회 초기화. `STATE_REPAIR_*` 변수는 실행 직후 삭제
 - **STATE_CLEAR_FENCE_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 주문 fence(`pending_order_intent`/`pending_order_batch`)를 1회 초기화. `STATE_CLEAR_FENCE_SYMBOL` + `STATE_CLEAR_FENCE_EXPECT_T`/`EXPECT_LAST_UPDATED`/`EXPECT_INTENT`/`EXPECT_BATCH` 필요 (intent/batch는 빈 값 = "fence 없음" 의미, env var 존재만 필수). 실행 직후 변수 삭제

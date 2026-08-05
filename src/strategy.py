@@ -119,6 +119,10 @@ def _get_reverse_star_point(symbol, last_price, close_prices):
         valid = [p for p in close_prices if isinstance(p, (int, float)) and p > 0]
         if valid:
             return sum(valid[-5:]) / len(valid[-5:])
+    print(
+        f"[경고] {symbol} 별지점(직전 5거래일 종가 평균) 계산 불가 — "
+        f"현재가 ${last_price:.2f}로 대체합니다 (Finnhub 키/close_prices 없음)"
+    )
     return last_price
 
 
@@ -345,7 +349,8 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
         )
 
     # ========================================
-    # 4. 소진 상태 확인 (T >= splits)
+    # 4. 소진 상태 확인 (T > splits - 1)
+    #    원본 규칙: 20분할 T>19, 40분할 T>39 — 마지막 1회 매수도 불가능한 상태
     # ========================================
 
     reverse_state = (state or {}).get("reverse_mode", {})
@@ -353,7 +358,7 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
         reverse_state.get("active", False)
         or reverse_state.get("reconciliation_only", False)
     )
-    if T >= splits or reverse_active:
+    if T > splits - 1 or reverse_active:
         if state is not None and position_qty > 0:
             rev_result = execute_reverse_mode(
                 broker, symbol, exchange_code, splits, symbol_type,
@@ -386,8 +391,8 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
                 "orders": rev_orders,
             }
         print(
-            f"[경고] {symbol} T={T} → 분할 수({splits})를 모두 소진했습니다. "
-            f"주문을 생성하지 않습니다."
+            f"[경고] {symbol} T={T} → 소진 구간(T > {splits - 1})에 진입했지만 "
+            f"보유수량이 없어 주문을 생성하지 않습니다."
         )
         return {
             "symbol": symbol,
