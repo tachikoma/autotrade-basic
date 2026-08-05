@@ -159,6 +159,10 @@ uv run pytest tests/ -v
   - T 갱신은 실제 체결 이력 반영을 기준으로 하며, 전략의 T 계산값만으로 저장하지 않음
   - 종료 조건: 종가 > 평단×(1-0.15)(TQQQ) or ×(1-0.20)(SOXL) — 판정은 `last_price`(실시간/최신가) 기준. 런 타이밍: **실전=pre장**(직전 종가 근사), **모의=장 후반**(당일 종가 근사). pre-market이 라이브 시세를 반환하면 종가와 달라질 수 있어 broker별 1회 DRY 검증 필요
   - 별지점: Finnhub 5일 MA → close_prices(state) → last_price fallback (fallback 시 `[경고]` 로그 출력)
+  - **TOSS MOC 변환**: 토스는 MOC(장마감시장가)를 지원하지 않음. 리버스 1일차 SELL MOC는 `toss/adapter.py place_order()`에서 LOC(장마감지정가) `$0.01`로 자동 변환되어 종가 체결 (MOC와 동일 동작, `_MOC_SELL_PROXY_PRICE`). 변환은 adapter 한 곳에서만 일어나므로 전략은 계속 `order_type="MOC"`를 생성하며, fence(`pending_order_intent/batch`)에는 원본 MOC/현재가가 기록됨 — fence 복구는 세션 날짜만 사용하므로 영향 없음. **BUY MOC는 변환하지 않음** ($0.01 매수 LOC는 체결 불가) → `OrderNotAcceptedError` 유지
+  - **BUY LOC +19% 보정과 쿼터매수 상호작용**: `trading_bot.py`의 BUY LOC 가격 보정(`last_price × 1.19` 초과 시 `last×1.19`로 교정)이 리버스 쿼터매수(`star-0.01`, 별지점=5일MA)에도 적용됨. 하락장이 전제인 리버스에서는 별지점이 현재가보다 19% 이상 높아 **일반모드보다 훨씬 자주 발동** → notify 다발 + 매수가가 의도(별지점 대기)와 다른 `last×1.19`로 보정될 수 있음. 미해결 리스크로 기록 (기능 실패는 아님)
+  - **데모 모드 MOC/LOC→LIMIT 변환**: KIS/KIWOOM 데모는 MOC/LOC/LOO/MOO를 `LIMIT`으로 자동 변환(LS는 `DEMO_UNSUPPORTED_ORDER_TYPES`가 비어 있어 변환 없음). 리버스 "마감 체결" 전제가 깨져 데모(장중 체결 가능)와 실전(마감 체결) 결과가 달라질 수 있음. T 반영은 체결 이력 기준이라 정합성은 유지
+  - **실전 pre-market MOC/LOC 제출 미실증**: `trading_bot.py`는 실전에서 pre-market(ET ~04:00)까지 대기 후 주문. MOC/LOC(마감가 주문)는 통상 정규장에만 접수되므로 ET 04:00 제출 시 브로커가 거부/보류할 수 있음. KIS(33)/LS(M4)/KIWOOM(33) 실전의 "MOC+가격" 전송 및 TOSS CLS 주문의 pre-market 접수 여부는 **실전 배포 전 1회 검증 필요**
 - **STATE_DIAGNOSTIC_ONLY=true**: GitHub Actions 캐시의 T/reverse_mode 상태만 출력하고 브로커 API, 전략, 주문을 실행하지 않음. 일회성 진단 후 즉시 해제
 - **STATE_REPAIR_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 리버스 상태를 1회 초기화. `STATE_REPAIR_*` 변수는 실행 직후 삭제
 - **STATE_CLEAR_FENCE_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 주문 fence(`pending_order_intent`/`pending_order_batch`)를 1회 초기화. `STATE_CLEAR_FENCE_SYMBOL` + `STATE_CLEAR_FENCE_EXPECT_T`/`EXPECT_LAST_UPDATED`/`EXPECT_INTENT`/`EXPECT_BATCH` 필요 (intent/batch는 빈 값 = "fence 없음" 의미, env var 존재만 필수). 실행 직후 변수 삭제

@@ -55,6 +55,11 @@ _TOSS_ORDER_TYPE_MAP = {
 # 기존 코드 호환을 위해 정의 (Limit으로 자동 변환)
 _DEMO_UNSUPPORTED_ORDER_TYPES = {"LOC", "LOO", "MOO", "MOC"}
 
+# 토스 MOC(장마감시장가) 미지원 → SELL MOC를 LOC(장마감지정가)로 변환할 때 쓰는
+# 매도 제한가. $0.01은 어떤 종가에서도 충족되는 하한이라 종가에 체결되어
+# MOC와 동일하게 동작합니다.
+_MOC_SELL_PROXY_PRICE = 0.01
+
 
 class TossBroker(Broker):
     """
@@ -560,6 +565,15 @@ class TossBroker(Broker):
 
         # 브로커 호가 단위 규칙에 맞춰 주문가를 정규화 ($1+ → 소수점 2자리 등)
         price = normalize_order_price(price)
+
+        # 토스는 MOC(장마감시장가)를 지원하지 않습니다.
+        # 리버스모드 1일차 MOC 매도를 LOC(장마감지정가)로 변환해 종가 체결을 구현합니다.
+        # SELL MOC에 $0.01 제한가를 걸면 어떤 종가에서도 충족되므로 항상 종가에 체결됩니다.
+        # (BUY MOC는 $0.01 LOC로는 체결될 수 없으므로 변환하지 않습니다.)
+        if order_type == "MOC" and side == "SELL":
+            print("⚠️  토스 MOC 미지원: SELL MOC → LOC($0.01)으로 변환 (종가 체결)")
+            order_type = "LOC"
+            price = _MOC_SELL_PROXY_PRICE
 
         order_mapping = _TOSS_ORDER_TYPE_MAP.get(order_type)
         if order_mapping is None:

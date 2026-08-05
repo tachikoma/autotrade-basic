@@ -1267,6 +1267,30 @@ class TestTossBrokerContract(BrokerContractTest):
         assert calls["body"]["orderType"] == "LIMIT"
         assert calls["body"]["timeInForce"] == "CLS"
 
+    def test_place_order_sell_moc_converts_to_loc_0_01(self):
+        """SELL MOC는 토스 미지원 → LOC($0.01)로 변환되어 종가 체결되어야 합니다."""
+        calls = {}
+
+        def _capture_post(path, token, json_body=None, extra_headers=None):
+            calls["body"] = json_body
+            return _make_response({"result": {"orderId": "mock_moc_001"}})
+
+        self._mock_session.post.side_effect = _capture_post
+        broker = self._create_broker()
+        result = broker.place_order("SOXL", "NYSE", "SELL", 10, 52.0, "MOC")
+
+        assert result is not None
+        assert calls["body"]["side"] == "SELL"
+        assert calls["body"]["orderType"] == "LIMIT"
+        assert calls["body"]["timeInForce"] == "CLS"
+        assert calls["body"]["price"] == 0.01
+
+    def test_place_order_buy_moc_raises(self):
+        """BUY MOC는 변환하지 않고 지원하지 않는 유형으로 거부해야 합니다."""
+        broker = self._create_broker()
+        with pytest.raises(OrderError, match="지원하지 않는 주문 유형"):
+            broker.place_order("TQQQ", "NASDAQ", "BUY", 10, 52.0, "MOC")
+
     def test_place_order_invalid_type_raises(self):
         """지원하지 않는 주문 유형은 OrderError가 발생해야 합니다."""
         broker = self._create_broker()
