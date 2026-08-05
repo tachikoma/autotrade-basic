@@ -160,9 +160,13 @@ uv run pytest tests/ -v
   - 별지점: Finnhub 5일 MA → close_prices(state) → last_price fallback
 - **STATE_DIAGNOSTIC_ONLY=true**: GitHub Actions 캐시의 T/reverse_mode 상태만 출력하고 브로커 API, 전략, 주문을 실행하지 않음. 일회성 진단 후 즉시 해제
 - **STATE_REPAIR_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 리버스 상태를 1회 초기화. `STATE_REPAIR_*` 변수는 실행 직후 삭제
-- **LIVE 주문 fence**: 주문 전 `pending_order_batch`/`pending_order_intent`를 캐시에 저장하며, fence가 남아 있으면 다음 실행과 다른 종목 주문도 중단
+- **STATE_CLEAR_FENCE_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 주문 fence(`pending_order_intent`/`pending_order_batch`)를 1회 초기화. `STATE_CLEAR_FENCE_SYMBOL` + `STATE_CLEAR_FENCE_EXPECT_T`/`EXPECT_LAST_UPDATED`/`EXPECT_INTENT`/`EXPECT_BATCH` 필요 (intent/batch는 빈 값 = "fence 없음" 의미, env var 존재만 필수). 실행 직후 변수 삭제
+- **LIVE 주문 fence**: 주문 전 `pending_order_batch`/`pending_order_intent`를 캐시에 저장하며, fence가 남아 있어도 **전체 중단하지 않고** 해당 종목만 복구를 시도합니다 (다른 종목은 계속 진행)
   - **미접수 확정(`OrderNotAcceptedError`)**: 브로커가 명시적으로 거부(사전검증 실패 또는 거부 응답)해 주문이 접수되지 않았음이 보장되면 fence를 해제하고 해당 종목의 남은 주문만 중단 → 다음 종목 계속 진행
-  - **불확실(네트워크 타임아웃/연결 오류, 주문번호 누락, checkpoint 실패)**: fence 유지 → 전체 프로그램 중단 (수동 해소 필요)
+  - **불확실(네트워크 타임아웃/연결 오류, 주문번호 누락, checkpoint 실패)**: fence 유지 → 그 실행은 중단. **다음 RUN에서 자동 복구**를 시도합니다
+  - **이전 세션 자동 복구** (`_recover_order_fence`, `trading_bot.py`): 주문이력/잔고 reconciliation(Step 1~3)을 정상 통과한 뒤, fence의 `submitted_session`(intent)/`session`(batch)이 오늘 미국(ET) 세션보다 과거면 이력이 정착된 것으로 보고 fence를 해제하고 정상 진행. 잔고 조회 실패(None) 또는 같은 세션/세션 정보 없음이면 보수적으로 fence 유지 + 해당 종목만 중단
+  - fence 복구는 1일 1회 실행 + 당일 유효 주문(LOC/MOC/LIMIT) 특성상 전일 미확정 주문이 하루 뒤 이력으로 판별 가능하므로 안전합니다
+  - `STATE_CLEAR_FENCE_ONLY`로 수동 해소 가능 (자동 복구가 안 되는 경우)
 - **close_prices**: state.json에 최근 5거래일 종가 저장 (Finnhub fallback용)
 - **`get_daily_closes()`** (`src/broker/base.py`):
   - Broker 추상 메서드: `(symbol, exchange, days=5) → list[float]` (오래된 종가순)

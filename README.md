@@ -165,6 +165,7 @@ TRADE_MODE=LIVE uv run python trading_bot.py
 | `ORDER_HISTORY_VERBOSE` | `true` / `false` | LIVE 모드에서도 `[주문이력 요약]` 상세 출력. 기본값 `false`. DRY는 항상 출력. |
 | `STATE_DIAGNOSTIC_ONLY` | `true` / `false` | 캐시 상태만 출력하고 API/전략/주문을 실행하지 않음. 기본값 `false`. |
 | `STATE_REPAIR_ONLY` | `true` / `false` | 지정 fingerprint가 일치할 때만 리버스 상태를 1회 복구. 기본값 `false`. |
+| `STATE_CLEAR_FENCE_ONLY` | `true` / `false` | 지정 fingerprint가 일치할 때만 주문 fence를 1회 초기화. 기본값 `false`. |
 
 > **하위호환**: `BROKER_MODE` 대신 기존 `KIS_MODE`를 사용해도 작동합니다 (`config.py`가 폴백).
 
@@ -188,6 +189,7 @@ KIS_ACCOUNT_NO=12345678
 TRADE_MODE=DRY                  # DRY 또는 LIVE
 ORDER_HISTORY_VERBOSE=false     # true 시 LIVE에서도 주문이력 상세 출력
 STATE_DIAGNOSTIC_ONLY=false     # true 시 캐시 상태만 출력하고 종료
+STATE_CLEAR_FENCE_ONLY=false    # true 시 주문 fence만 1회 초기화하고 종료
 SYMBOLS=TQQQ:NAS,SOXL:AMS       # 브로커별 거래소 코드 주의 (아래 참고)
 TQQQ_SPLITS=40
 TQQQ_SYMBOL_TYPE=TQQQ
@@ -205,6 +207,7 @@ ADDITIONAL_LOC_LEVELS=3         # 모든 종목 공통 기본값 (종목별 설�
 - **다중 종목 중심**: `SYMBOLS`에 `TQQQ:NAS,SOXL:AMS` 형태로 종목을 지정합니다. 미설정 시 기본값은 `TQQQ:NAS,SOXL:AMS`입니다.
 - **캐시 상태 진단**: GitHub Actions에서 `.state.json`을 직접 확인할 수 없을 때 해당 Environment의 `STATE_DIAGNOSTIC_ONLY=true`로 1회 실행하면 T, 리버스모드 진행일, 누적 매도대금, 마지막 처리 주문번호만 출력합니다. 확인 후 변수를 즉시 `false` 또는 삭제하세요.
 - **캐시 상태 복구**: `STATE_REPAIR_ONLY=true`는 API/전략/주문 없이 지정한 fingerprint가 일치할 때만 실행합니다. `STATE_REPAIR_SYMBOL`, `STATE_REPAIR_EXPECT_T`, `STATE_REPAIR_EXPECT_DAY_COUNT`, `STATE_REPAIR_EXPECT_PROCEEDS`, `STATE_REPAIR_EXPECT_LAST_UPDATED`, `STATE_REPAIR_EXPECT_LAST_ORDNO`, `STATE_REPAIR_EXPECT_REVERSE_IDS`, `STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT`를 모두 설정하고, 운영 브랜치의 정확한 캐시에서 1회 실행한 뒤 즉시 모든 복구 변수를 삭제하세요.
+- **주문 fence 복구**: 불확실 주문(네트워크 오류 등)으로 남은 주문 fence는 **다음 RUN에서 자동 복구**됩니다. 주문이력/잔고 reconciliation이 정상 통과하고 fence가 이전 미국(ET) 세션 기록이면 이력이 정착된 것으로 보고 fence를 해제하고 진행합니다 (해당 종목만, 다른 종목은 영향 없음). 자동 복구가 안 되는 경우 `STATE_CLEAR_FENCE_ONLY=true` + `STATE_CLEAR_FENCE_SYMBOL` + `STATE_CLEAR_FENCE_EXPECT_T` + `STATE_CLEAR_FENCE_EXPECT_LAST_UPDATED` + `STATE_CLEAR_FENCE_EXPECT_INTENT` + `STATE_CLEAR_FENCE_EXPECT_BATCH`로 1회 초기화 후 변수를 즉시 삭제하세요. `EXPECT_INTENT`/`EXPECT_BATCH`는 상태에 남은 fence 값의 정규화 JSON이며, "fence 없음"이면 빈 값입니다 (env var 존재만 필수).
 - **종목별 설정**: `{SYMBOL}_SPLITS`, `{SYMBOL}_SYMBOL_TYPE`, `{SYMBOL}_SEED`, `{SYMBOL}_ADDITIONAL_LOC_LEVELS`를 사용합니다.
   - `{SYMBOL}_SEED`는 **필수**입니다. 미설정 시 시작 시 에러가 발생합니다.
   - `{SYMBOL}_ADDITIONAL_LOC_LEVELS` 미설정 시 글로벌 `ADDITIONAL_LOC_LEVELS`를 사용하며, 이것도 없으면 기본값 3이 적용됩니다.

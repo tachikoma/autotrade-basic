@@ -9,6 +9,7 @@
 프로그램 실행 중 발생하는 모든 에러는 catch되어 출력됩니다.
 """
 
+import json
 import os
 import sys
 import time
@@ -30,6 +31,7 @@ from notifier import notify
 
 STATE_DIAGNOSTIC_ONLY = os.getenv("STATE_DIAGNOSTIC_ONLY", "").strip().lower() == "true"
 STATE_REPAIR_ONLY = os.getenv("STATE_REPAIR_ONLY", "").strip().lower() == "true"
+STATE_CLEAR_FENCE_ONLY = os.getenv("STATE_CLEAR_FENCE_ONLY", "").strip().lower() == "true"
 
 
 def generate_cycle_report(symbol, order_history, state, seed, commission_rate):
@@ -218,17 +220,6 @@ def run_one_symbol(broker: Broker, symbol_config):
         raise RuntimeError(
             f"{symbol} 상태 파일을 확인할 수 없어 LIVE 주문을 중단합니다: "
             f"{state['_state_unavailable']}"
-        )
-
-    if TRADE_MODE == "LIVE" and state.get("pending_order_intent"):
-        raise RuntimeError(
-            f"이전 주문 intent가 남아 있어 상태 reconciliation/신규 주문을 중단합니다: "
-            f"{state['pending_order_intent']}"
-        )
-    if TRADE_MODE == "LIVE" and state.get("pending_order_batch"):
-        raise RuntimeError(
-            f"이전 주문 batch fence가 남아 있어 신규 주문을 중단합니다: "
-            f"{state['pending_order_batch']}"
         )
 
     force_t = symbol_config.get("force_t")
@@ -429,6 +420,12 @@ def run_one_symbol(broker: Broker, symbol_config):
             if state.get("balance_mismatch"):
                 state.pop("balance_mismatch", None)
                 save_state(symbol, state)
+
+    # ── 주문 fence 복구 (이전 세션 이력 정착 시 자동 해제) ──
+    # 주문이력/잔고 reconciliation이 정상 통과한 뒤에만 도달합니다.
+    # fence가 있어도 즉시 차단하지 않고, 전일(이전 세션)이면 자동 해제 후 진행합니다.
+    if TRADE_MODE == "LIVE":
+        _recover_order_fence(state, symbol, live_qty)
 
     # ── T값 강제 설정 (FORCE_T) ──
     if force_t is not None:
@@ -917,6 +914,52 @@ def _print_state_diagnostic():
     print("[상태 진단] 종료합니다. 상태 파일은 변경하지 않았습니다.")
 
 
+def _fence_session(state):
+    """pending fence가 기록된 미국 세션(YYYY-MM-DD)을 반환합니다. 없으면 ''."""
+    intent = state.get("pending_order_intent")
+    if intent:
+        return intent.get("submitted_session", "")
+    batch = state.get("pending_order_batch")
+    if batch:
+        return batch.get("session", "")
+    return ""
+
+
+def _recover_order_fence(state, symbol, live_qty):
+    """이전 세션에 남은 주문 fence를 이력 정착 기준으로 해제합니다.
+
+    run_one_symbol()의 reconciliation(주문이력/잔고 교차검증)이 정상 통과한 뒤에
+    호출됩니다. 전일(이전 세션)의 미확정 주문은 하루 뒤 이력으로 판별할 수 있으므로
+    fence를 해제하고 정상 진행합니다.
+
+    보수적으로 유지하는 경우:
+    - 잔고를 확인할 수 없음(live_qty None): 불확실성이 남아 있어 fence 유지 + 종목 중단
+    - 같은 세션이거나 세션 정보 없음: 미확정 주문이 방금 발생한 상태 → fence 유지 + 종목 중단
+
+    Returns:
+        bool: fence를 해제했으면 True, 남아 있지 않았으면 False
+    """
+    if not (state.get("pending_order_intent") or state.get("pending_order_batch")):
+        return False
+    if live_qty is None:
+        raise RuntimeError(
+            f"이전 주문 fence가 남아 있고 잔고를 확인할 수 없어 신규 주문을 중단합니다."
+        )
+    today_session = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    session = _fence_session(state)
+    if not session or session >= today_session:
+        raise RuntimeError(
+            f"이전 주문 fence가 남아 있어 신규 주문을 중단합니다: "
+            f"intent={state.get('pending_order_intent')}, batch={state.get('pending_order_batch')}"
+        )
+    state["pending_order_intent"] = None
+    state["pending_order_batch"] = None
+    save_state(symbol, state)
+    print(f"  → [fence 복구] {symbol} 이전 세션({session}) 주문 fence를 이력 정착으로 해제하고 진행합니다.")
+    notify(f"[fence 복구] {symbol} 이전 세션({session}) 미확정 주문 fence를 이력 정착으로 해제하고 진행합니다.")
+    return True
+
+
 def _has_unresolved_reverse_orders(state):
     """현재 리버스 cycle에 아직 terminal 확정되지 않은 주문이 있는지 확인합니다."""
     cycle_id = state.get("reverse_mode", {}).get("cycle_id", "")
@@ -996,6 +1039,60 @@ def _repair_state_only():
     print(f"[상태 복구] {symbol} T/체결 watermark를 유지하고 리버스 상태만 초기화했습니다.")
 
 
+def _clear_fence_only():
+    """기대 fingerprint가 일치할 때만 주문 fence를 1회 초기화합니다.
+
+    불확실 주문(네트워크 오류 등)으로 남은 pending_order_intent/pending_order_batch를
+    관리자가 브로커 주문이력을 직접 확인한 뒤 제거할 때 사용합니다.
+    API/전략/주문은 실행하지 않으며, 순수 상태 파일만 수정합니다.
+    """
+    def _required(name, allow_empty=False):
+        raw = os.environ.get(name)
+        if raw is None:
+            raise RuntimeError(f"fence 복구 fingerprint 환경변수가 없습니다: {name}")
+        if not allow_empty and not raw.strip():
+            raise RuntimeError(f"fence 복구 fingerprint 환경변수가 비어 있습니다: {name}")
+        return raw.strip()
+
+    symbol = _required("STATE_CLEAR_FENCE_SYMBOL").upper()
+    expected_t = _required("STATE_CLEAR_FENCE_EXPECT_T")
+    expected_updated = _required("STATE_CLEAR_FENCE_EXPECT_LAST_UPDATED")
+    # intent/batch는 "fence 없음"을 의미하는 빈 값이 허용됩니다 (env var 존재만 필수)
+    expected_intent = _required("STATE_CLEAR_FENCE_EXPECT_INTENT", allow_empty=True)
+    expected_batch = _required("STATE_CLEAR_FENCE_EXPECT_BATCH", allow_empty=True)
+
+    state = load_state(symbol)
+    actual_intent = state.get("pending_order_intent")
+    actual_batch = state.get("pending_order_batch")
+
+    def _fmt(value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True) if value else ""
+
+    actual = {
+        "T": float(state.get("T", 0.0)),
+        "last_updated": state.get("last_updated", ""),
+        "intent": _fmt(actual_intent),
+        "batch": _fmt(actual_batch),
+    }
+    expected = {
+        "T": float(expected_t),
+        "last_updated": expected_updated,
+        "intent": expected_intent,
+        "batch": expected_batch,
+    }
+    if actual != expected:
+        raise RuntimeError(f"fence 복구 fingerprint 불일치: actual={actual}, expected={expected}")
+    if not actual_intent and not actual_batch:
+        print(f"[fence 복구] {symbol} 남아 있는 fence가 없습니다. (이미 해소됨)")
+        return
+
+    print(f"[fence 복구] {symbol} 주문 fence 초기화: intent={actual_intent}, batch={actual_batch}")
+    state["pending_order_intent"] = None
+    state["pending_order_batch"] = None
+    save_state(symbol, state)
+    print(f"[fence 복구] {symbol} 주문 fence를 해제했습니다.")
+
+
 def main():
     """
     자동매매 봇의 메인 실행 함수입니다.
@@ -1008,6 +1105,9 @@ def main():
         return
     if STATE_REPAIR_ONLY:
         _repair_state_only()
+        return
+    if STATE_CLEAR_FENCE_ONLY:
+        _clear_fence_only()
         return
 
     # 전체 T 재추정은 주문을 절대 발생시키지 않아야 합니다.
@@ -1059,9 +1159,12 @@ def main():
                     raise RuntimeError(
                         f"LIVE preflight 실패: {cfg['symbol']} state를 확인할 수 없습니다."
                     )
+                # 주문 fence는 종목별 복구 대상입니다. 전체 중단 없이
+                # run_one_symbol()이 이전 세션 이력 reconciliation으로 복구를 시도합니다.
                 if preflight_state.get("pending_order_intent") or preflight_state.get("pending_order_batch"):
-                    raise RuntimeError(
-                        f"LIVE preflight 실패: {cfg['symbol']} 이전 주문 fence가 남아 있습니다."
+                    print(
+                        f"[fence 감지] {cfg['symbol']} 이전 주문 fence가 남아 있어 "
+                        f"해당 종목 reconciliation/복구를 시도합니다. (다른 종목은 진행)"
                     )
                 if preflight_state.get("balance_mismatch"):
                     raise RuntimeError(
@@ -1085,8 +1188,6 @@ def main():
                     "fence를 유지",
                     "유효한 주문번호가 없습니다",
                     "주문 접수 응답",
-                    "주문 intent가 남아",
-                    "주문 batch fence가 남아",
                     "상태 파일을 확인할 수 없어",
                     "T=0인데 브로커 잔고",
                     "이력 포지션과 브로커 잔고가 불일치",
