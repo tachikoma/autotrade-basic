@@ -6,6 +6,8 @@
 """
 
 import os
+import time
+
 import requests
 from dotenv import load_dotenv
 
@@ -44,22 +46,39 @@ def send_telegram(message: str) -> bool:
         "text": message
     }
     
-    try:
-        # 메시지 전송
-        response = _TELEGRAM_SESSION.post(url, data=data, timeout=10)
-        
-        # 응답 확인
-        if response.status_code == 200:
-            print("✅ 텔레그램 메시지 전송 성공")
-            return True
-        else:
+    # 일시적 네트워크 오류(타임아웃/연결 오류/서버 5xx)에 대해 재시도합니다.
+    # 재시도로 해결되지 않는 오류(4xx 설정 오류 등)는 즉시 실패 처리합니다.
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # 메시지 전송
+            response = _TELEGRAM_SESSION.post(url, data=data, timeout=10)
+
+            # 응답 확인
+            if response.status_code == 200:
+                print("✅ 텔레그램 메시지 전송 성공")
+                return True
+            if response.status_code >= 500 and attempt < max_attempts:
+                print(f"⚠️ 텔레그램 서버 오류({response.status_code}) — {attempt}/{max_attempts}회 재시도")
+                time.sleep(1)
+                continue
             print(f"❌ 텔레그램 메시지 전송 실패: {response.status_code}")
             print(f"   응답 내용: {response.text}")
             return False
-            
-    except requests.exceptions.Timeout:
-        print("❌ 텔레그램 메시지 전송 시간 초과")
-        return False
-    except Exception as e:
-        print(f"❌ 텔레그램 메시지 전송 중 오류 발생: {e}")
-        return False
+
+        except requests.exceptions.Timeout:
+            if attempt < max_attempts:
+                print(f"⚠️ 텔레그램 전송 시간 초과 — {attempt}/{max_attempts}회 재시도")
+                time.sleep(1)
+                continue
+            print("❌ 텔레그램 메시지 전송 시간 초과")
+            return False
+        except Exception as e:
+            if attempt < max_attempts:
+                print(f"⚠️ 텔레그램 전송 중 오류 발생 — {attempt}/{max_attempts}회 재시도: {e}")
+                time.sleep(1)
+                continue
+            print(f"❌ 텔레그램 메시지 전송 중 오류 발생: {e}")
+            return False
+
+    return False

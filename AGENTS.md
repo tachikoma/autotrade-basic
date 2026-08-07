@@ -75,6 +75,7 @@ autotrade-basic/
 - T값(float)이 누적 매수 횟수를 나타내는 독특한 상태 관리
 - 모의/실전 TR_ID를 KIS_MODE에 따라 동적 전환
 - DRY 모드에서는 주문 출력만 하고 실행하지 않으며, 리버스모드 상태도 복사본으로 계산해 캐시에 진행 상태를 저장하지 않음
+- **DRY 불일치/사이클 종료 처리**: DRY에서는 이력-잔고 불일치(`balance_mismatch`)가 감지돼도 **기록·자동보정·중단 없이 경고 + 텔레그램 1회(비긴급)만** 출력하고 프리뷰를 계속 진행(exit 0). 사이클 종료 감지 시 리포트만 표시하고 **캐시 저장(T 리셋/시드)을 생략**. LIVE는 기존대로 기록 + 중단(RuntimeError → fatal). `{SYMBOL}_FORCE_T`/`FORCE_T_REINFERENCE`는 가드 아래에 있어 DRY에서 불일치가 있어도 정상 적용됨
 - 리버스모드(`execute_reverse_mode()`): T>분할수-1 시 발동, 5일 MA 별지점 기반 무한매도+쿼터매수
 - T값 환경변수 보정: `FORCE_T_REINFERENCE`, `{SYMBOL}_FORCE_T`, `{SYMBOL}_MAX_T` (기본 MAX_T=분할수, 리버스모드 진입용 `T=splits` 허용)
 
@@ -156,6 +157,7 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
       `resolve_real_kst_from_ord` 보정은 display-only이므로 안전하나, 실전 배포 전
       반드시 실전 API 응답으로 `ord_dt` 의미를 1회 검증할 것.
 - **ORDER_HISTORY_VERBOSE=true**: LIVE 모드에서도 `[주문이력 요약]` 상세 출력 (DRY는 항상 출력). KIS/KIWOOM/LS/TOSS 공통
+- **텔레그램 재시도**: `send_telegram()`은 타임아웃/연결 오류/서버 5xx 시 최대 3회 재시도(1초 간격). 4xx(설정 오류 등)는 재시도 없이 즉시 실패
 - **T 보정 환경변수**:
   - `FORCE_T_REINFERENCE=true`: `last_updated` 초기화 → 전체 이력(90일)에서 T 재추정 (LIVE→DRY 자동 전환)
   - `{SYMBOL}_FORCE_T={value}`: state.json의 T를 강제 덮어쓰기 (orders_meta/balance_mismatch 초기화, `last_updated`/`last_processed_ordno`를 이력 최신 주문 시각으로 갱신 → 이중 가산 방지, `FORCE_T=0`이면 `cycle_start_date` 초기화)

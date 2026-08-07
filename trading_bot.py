@@ -354,46 +354,55 @@ def run_one_symbol(broker: Broker, symbol_config):
                 save_state(symbol, state)
                 return
             msg = (
-                f"[불일치] 이력으로는 보유 {comp_qty}주(평단 ${comp_avg:.2f})로 추정되나, 브로커 잔고는 0입니다. "
-                f"보수적 자동 보정: T=0으로 초기화합니다."
+                f"[불일치] 이력으로는 보유 {comp_qty}주(평단 ${comp_avg:.2f})로 추정되나, 브로커 잔고는 0입니다."
             )
-            print(msg)
-            notify(msg)
-            state["balance_mismatch"] = {
-                "computed_net_qty": comp_qty,
-                "computed_avg_price": round(comp_avg, 2),
-                "live_qty": live_qty,
-                "live_avg_price": round(live_avg, 2) if live_avg is not None else None,
-                "note": "auto-corrected-to-zero",
-            }
-            state["T"] = 0.0
-            state["cycle_start_date"] = ""
-            state["reverse_mode"] = {}
-            save_state(symbol, state)
-            raise RuntimeError(
-                f"{symbol} 이력 포지션과 브로커 잔고가 불일치하여 주문을 중단합니다. "
-                f"history={comp_qty}, broker={live_qty}"
-            )
+            if TRADE_MODE == "DRY":
+                # DRY는 프리뷰/진단 모드 — 기록·자동보정·중단 없이 경고만 남기고 계속 진행합니다.
+                print(f"{msg} DRY 모드라 기록/보정 없이 프리뷰를 계속합니다. (LIVE 시 자동 보정 후 중단)")
+                notify(msg)
+            else:
+                print(f"{msg} 보수적 자동 보정: T=0으로 초기화합니다.")
+                notify(msg)
+                state["balance_mismatch"] = {
+                    "computed_net_qty": comp_qty,
+                    "computed_avg_price": round(comp_avg, 2),
+                    "live_qty": live_qty,
+                    "live_avg_price": round(live_avg, 2) if live_avg is not None else None,
+                    "note": "auto-corrected-to-zero",
+                }
+                state["T"] = 0.0
+                state["cycle_start_date"] = ""
+                state["reverse_mode"] = {}
+                save_state(symbol, state)
+                raise RuntimeError(
+                    f"{symbol} 이력 포지션과 브로커 잔고가 불일치하여 주문을 중단합니다. "
+                    f"history={comp_qty}, broker={live_qty}"
+                )
 
         elif live_qty != comp_qty:
             # 불일치지만 자동 보정하지 않음 — 관리자 확인 필요
             msg = (
                 f"[불일치] 이력 net_qty={comp_qty}, 브로커 잔고={live_qty}. 자동 보정하지 않습니다. 확인 필요."
             )
-            print(msg)
-            notify(msg)
-            state["balance_mismatch"] = {
-                "computed_net_qty": comp_qty,
-                "computed_avg_price": round(comp_avg, 2),
-                "live_qty": live_qty,
-                "live_avg_price": round(live_avg, 2) if live_avg is not None else None,
-                "note": "requires-attention",
-            }
-            save_state(symbol, state)
-            raise RuntimeError(
-                f"{symbol} 이력 포지션과 브로커 잔고가 불일치하여 주문을 중단합니다. "
-                f"history={comp_qty}, broker={live_qty}"
-            )
+            if TRADE_MODE == "DRY":
+                # DRY는 프리뷰/진단 모드 — 상태 기록 없이 경고만 남기고 계속 진행합니다.
+                print(f"{msg} (DRY 모드라 balance_mismatch를 기록하지 않습니다)")
+                notify(msg)
+            else:
+                print(msg)
+                notify(msg)
+                state["balance_mismatch"] = {
+                    "computed_net_qty": comp_qty,
+                    "computed_avg_price": round(comp_avg, 2),
+                    "live_qty": live_qty,
+                    "live_avg_price": round(live_avg, 2) if live_avg is not None else None,
+                    "note": "requires-attention",
+                }
+                save_state(symbol, state)
+                raise RuntimeError(
+                    f"{symbol} 이력 포지션과 브로커 잔고가 불일치하여 주문을 중단합니다. "
+                    f"history={comp_qty}, broker={live_qty}"
+                )
 
         elif state["T"] == 0 and live_qty > 0:
             # T=0인데 실제 보유가 있음: T 오추정 (소액 시드로 인한 추가매수 오분류)
@@ -401,19 +410,24 @@ def run_one_symbol(broker: Broker, symbol_config):
                 f"[경고] {symbol} T=0이지만 브로커 잔고에 {live_qty}주 보유 중입니다. "
                 f"T가 실제보다 낮게 추정되었을 수 있습니다. .state.json 에서 직접 확인/수정하세요."
             )
-            print(msg)
-            notify(msg)
-            state["balance_mismatch"] = {
-                "computed_net_qty": comp_qty,
-                "computed_avg_price": round(comp_avg, 2),
-                "live_qty": live_qty,
-                "live_avg_price": round(live_avg, 2) if live_avg is not None else None,
-                "note": "T-estimation-suspected-low",
-            }
-            save_state(symbol, state)
-            raise RuntimeError(
-                f"{symbol} T=0인데 브로커 잔고 {live_qty}주가 있어 주문을 중단합니다."
-            )
+            if TRADE_MODE == "DRY":
+                # DRY는 프리뷰/진단 모드 — 상태 기록 없이 경고만 남기고 계속 진행합니다.
+                print(f"{msg} (DRY 모드라 balance_mismatch를 기록하지 않습니다)")
+                notify(msg)
+            else:
+                print(msg)
+                notify(msg)
+                state["balance_mismatch"] = {
+                    "computed_net_qty": comp_qty,
+                    "computed_avg_price": round(comp_avg, 2),
+                    "live_qty": live_qty,
+                    "live_avg_price": round(live_avg, 2) if live_avg is not None else None,
+                    "note": "T-estimation-suspected-low",
+                }
+                save_state(symbol, state)
+                raise RuntimeError(
+                    f"{symbol} T=0인데 브로커 잔고 {live_qty}주가 있어 주문을 중단합니다."
+                )
 
         else:
             # 일치하는 경우, 기존 불일치 표시 제거
@@ -502,29 +516,39 @@ def run_one_symbol(broker: Broker, symbol_config):
         print(f"\n{report_message}")
         notify(report_message)
 
-        # 복리 재투자가 활성화된 경우 다음 사이클 시드를 state에 저장합니다.
-        # 손실이 발생한 경우에도 변경된 시드를 저장합니다.
-        if REINVEST and report["next_cycle_seed"] is not None:
-            state["effective_seed"] = round(report["next_cycle_seed"], 2)
-            print(f"  복리 재투자: 다음 사이클 시드 = ${state['effective_seed']:.2f}")
-        else:
+        if TRADE_MODE == "DRY":
+            # DRY는 프리뷰/진단 모드 — 리포트만 표시하고 캐시(사이클 리셋/시드) 저장을 생략합니다.
+            # 프리뷰가 새 사이클 기준으로 보이도록 in-memory로만 리셋합니다.
             state["effective_seed"] = 0.0
+            state["T"] = 0.0
+            state["cycle_start_date"] = ""
+            state["reverse_mode"] = {}
+            T = 0.0
+            print("  [DRY] 사이클 종료 리포트 표시. 캐시 저장은 생략합니다. (LIVE 실행 시 실제 리셋/시드 갱신)")
+        else:
+            # 복리 재투자가 활성화된 경우 다음 사이클 시드를 state에 저장합니다.
+            # 손실이 발생한 경우에도 변경된 시드를 저장합니다.
+            if REINVEST and report["next_cycle_seed"] is not None:
+                state["effective_seed"] = round(report["next_cycle_seed"], 2)
+                print(f"  복리 재투자: 다음 사이클 시드 = ${state['effective_seed']:.2f}")
+            else:
+                state["effective_seed"] = 0.0
 
-        if _has_unresolved_reverse_orders(state):
-            state.setdefault("reverse_mode", {})["reconciliation_only"] = True
-            state["reverse_mode"]["active"] = False
+            if _has_unresolved_reverse_orders(state):
+                state.setdefault("reverse_mode", {})["reconciliation_only"] = True
+                state["reverse_mode"]["active"] = False
+                save_state(symbol, state)
+                return
+
+            # T 초기화 및 사이클 시작일 리셋
+            state["T"] = 0.0
+            state["cycle_start_date"] = ""
+            state["reverse_mode"] = {}
             save_state(symbol, state)
-            return
 
-        # T 초기화 및 사이클 시작일 리셋
-        state["T"] = 0.0
-        state["cycle_start_date"] = ""
-        state["reverse_mode"] = {}
-        save_state(symbol, state)
-
-        print("  T값 초기화 완료. 새 사이클을 즉시 시작합니다.")
-        T = 0.0
-        # ── Step 2로 계속 진행 (새 사이클 즉시 시작) ──
+            print("  T값 초기화 완료. 새 사이클을 즉시 시작합니다.")
+            T = 0.0
+            # ── Step 2로 계속 진행 (새 사이클 즉시 시작) ──
 
     if current_qty == 0 and state.get("reverse_mode", {}).get("active"):
         if _has_unresolved_reverse_orders(state):
