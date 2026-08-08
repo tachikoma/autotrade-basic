@@ -159,6 +159,7 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 | `last_updated` | str (ISO) | 마지막으로 T에 반영된 체결 시각 (UTC) |
 | `cycle_start_date` | str | 현재 사이클 시작일 (YYYY-MM-DD) |
 | `effective_seed` | float | 복리 재투자 적용 시드 (REINVEST 활성 시) |
+| `net_invested` | float | 순투입 금액 (Σ 매수체결금액 − Σ 매도체결금액, USD). 시드 캡 기준 |
 | `orders_meta` | dict | 주문별 메타 (t_target, is_additional, 부분체결 추적) |
 | `last_processed_ordno` | str | 마지막 처리 주문번호 |
 | `balance_mismatch` | dict | 잔고 불일치 진단 정보 |
@@ -234,6 +235,7 @@ ADDITIONAL_LOC_LEVELS=3         # 모든 종목 공통 기본값 (종목별 설�
 - **주문 fence 복구**: 불확실 주문(네트워크 오류 등)으로 남은 주문 fence는 **다음 RUN에서 자동 복구**됩니다. 주문이력/잔고 reconciliation이 정상 통과하고 fence가 이전 미국(ET) 세션 기록이면 이력이 정착된 것으로 보고 fence를 해제하고 진행합니다 (해당 종목만, 다른 종목은 영향 없음). 자동 복구가 안 되는 경우 `STATE_CLEAR_FENCE_ONLY=true` + `STATE_CLEAR_FENCE_SYMBOL` + `STATE_CLEAR_FENCE_EXPECT_T` + `STATE_CLEAR_FENCE_EXPECT_LAST_UPDATED` + `STATE_CLEAR_FENCE_EXPECT_INTENT` + `STATE_CLEAR_FENCE_EXPECT_BATCH`로 1회 초기화 후 변수를 즉시 삭제하세요. `EXPECT_INTENT`/`EXPECT_BATCH`는 상태에 남은 fence 값의 정규화 JSON이며, "fence 없음"이면 빈 값입니다 (env var 존재만 필수).
 - **종목별 설정**: `{SYMBOL}_SPLITS`, `{SYMBOL}_SYMBOL_TYPE`, `{SYMBOL}_SEED`, `{SYMBOL}_ADDITIONAL_LOC_LEVELS`를 사용합니다.
   - `{SYMBOL}_SEED`는 **필수**입니다. 미설정 시 시작 시 에러가 발생합니다.
+  - 시드 캡은 포지션 원가가 아닌 **순투입 금액**(`net_invested` = Σ 매수체결금액 − Σ 매도체결금액) 기준으로 `remaining_seed = seed − net_invested`를 적용합니다. 평단 이하 매도(손절)로 매도 회수액이 원가보다 작아도 시드 여유가 부풀려지지 않습니다.
   - `{SYMBOL}_ADDITIONAL_LOC_LEVELS` 미설정 시 글로벌 `ADDITIONAL_LOC_LEVELS`를 사용하며, 이것도 없으면 기본값 3이 적용됩니다.
 - **복리 재투자**: `REINVEST` 기본 활성화 (해제 시 `false`). 사이클 종료 후 순수익을 다음 시드에 합산합니다.
 

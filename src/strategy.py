@@ -340,11 +340,15 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
 
     remaining_seed = None
     if seed > 0:
-        current_use_value = position_qty * avg_price
-        remaining_seed = max(seed - current_use_value, 0.0)
+        # 시드 캡은 현재 포지션 원가(평단×수량)가 아니라 실제로 투입된 순투입 금액
+        # (Σ 매수체결금액 − Σ 매도체결금액)을 기준으로 합니다.
+        # 평단 이하 매도(손절) 시 원가 기준으로는 시드 여유가 부풀려져
+        # 누적 투입이 시드를 초과할 수 있어, state가 계산한 net_invested를 사용합니다.
+        net_invested = float((state or {}).get("net_invested", 0.0) or 0.0)
+        remaining_seed = max(seed - net_invested, 0.0)
         orderable_cash = min(orderable_cash, remaining_seed)
         print(
-            f"  시드 적용: ${seed:.2f} (사용한 금액 ${current_use_value:.2f} 차감 후 "
+            f"  시드 적용: ${seed:.2f} (순투입 ${net_invested:.2f} 차감 후 "
             f"${orderable_cash:.2f} 사용)"
         )
 

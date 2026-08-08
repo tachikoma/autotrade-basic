@@ -331,6 +331,7 @@ def run_one_symbol(broker: Broker, symbol_config):
             state["effective_seed"] = 0.0
         state["T"] = 0.0
         state["cycle_start_date"] = ""
+        state["net_invested"] = 0.0
         state["reverse_mode"] = {}
 
     # T 갱신 후 즉시 상태를 저장하여 다음 실행 시 일관성을 보장합니다.
@@ -372,6 +373,7 @@ def run_one_symbol(broker: Broker, symbol_config):
                 }
                 state["T"] = 0.0
                 state["cycle_start_date"] = ""
+                state["net_invested"] = 0.0
                 state["reverse_mode"] = {}
                 save_state(symbol, state)
                 raise RuntimeError(
@@ -474,6 +476,7 @@ def run_one_symbol(broker: Broker, symbol_config):
             state["last_processed_ordno"] = ""
         if force_t == 0:
             state["cycle_start_date"] = ""
+            state["net_invested"] = 0.0
         print(f"[T 보정] {symbol} FORCE_T={force_t} 적용 (이전 T={old_T}), "
               f"orders_meta/balance_mismatch 초기화, last_updated 갱신")
         save_state(symbol, state)
@@ -522,6 +525,7 @@ def run_one_symbol(broker: Broker, symbol_config):
             state["effective_seed"] = 0.0
             state["T"] = 0.0
             state["cycle_start_date"] = ""
+            state["net_invested"] = 0.0
             state["reverse_mode"] = {}
             T = 0.0
             print("  [DRY] 사이클 종료 리포트 표시. 캐시 저장은 생략합니다. (LIVE 실행 시 실제 리셋/시드 갱신)")
@@ -543,6 +547,7 @@ def run_one_symbol(broker: Broker, symbol_config):
             # T 초기화 및 사이클 시작일 리셋
             state["T"] = 0.0
             state["cycle_start_date"] = ""
+            state["net_invested"] = 0.0
             state["reverse_mode"] = {}
             save_state(symbol, state)
 

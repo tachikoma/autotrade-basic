@@ -38,6 +38,7 @@ def load_state(symbol):
             "last_updated": "",
             "cycle_start_date": "",
             "effective_seed": 0.0,
+            "net_invested": 0.0,
             "last_processed_ordno": "",
             "additional_loc_odno": [],
             "orders_meta": {},
@@ -60,6 +61,7 @@ def load_state(symbol):
             "last_updated": "",
             "cycle_start_date": "",
             "effective_seed": 0.0,
+            "net_invested": 0.0,
             "last_processed_ordno": "",
             "_state_unavailable": "corrupt",
         }
@@ -71,6 +73,7 @@ def load_state(symbol):
             "last_updated": "",
             "cycle_start_date": "",
             "effective_seed": 0.0,
+            "net_invested": 0.0,
             "last_processed_ordno": "",
             "additional_loc_odno": [],
             "orders_meta": {},
@@ -88,6 +91,9 @@ def load_state(symbol):
     last_updated = state.get("last_updated", "")
     cycle_start_date = state.get("cycle_start_date", "")
     effective_seed = float(state.get("effective_seed", 0.0))
+    net_invested = float(state.get("net_invested", 0.0))
+    # net_invested 필드가 없는 기존 상태(마이그레이션)는 이력 기반 백필을 위해 표시합니다.
+    net_invested_missing = "net_invested" not in state
     last_processed_ordno = state.get("last_processed_ordno", "")
     additional_loc_odno = state.get("additional_loc_odno", [])
     orders_meta = state.get("orders_meta", {})
@@ -104,6 +110,7 @@ def load_state(symbol):
         "last_updated": last_updated,
         "cycle_start_date": cycle_start_date,
         "effective_seed": effective_seed,
+        "net_invested": net_invested,
         "last_processed_ordno": last_processed_ordno,
         "additional_loc_odno": additional_loc_odno,
         "orders_meta": orders_meta,
@@ -113,6 +120,7 @@ def load_state(symbol):
         "reverse_mode": reverse_mode,
         "pending_order_intent": pending_order_intent,
         "pending_order_batch": pending_order_batch,
+        "_net_invested_missing": net_invested_missing,
     }
 
 
@@ -150,6 +158,7 @@ def save_state(symbol, state_dict):
         "last_updated": last_updated_val,
         "cycle_start_date": state_dict.get("cycle_start_date", ""),
         "effective_seed": float(state_dict.get("effective_seed", 0.0)),
+        "net_invested": float(state_dict.get("net_invested", 0.0)),
         "last_processed_ordno": state_dict.get("last_processed_ordno", ""),
         "additional_loc_odno": state_dict.get("additional_loc_odno", []),
         "orders_meta": state_dict.get("orders_meta", {}),
@@ -340,6 +349,7 @@ def reconcile_reverse_fills(state, order_history):
     # 이미 반영한 과거 체결을 되돌리지 않습니다.
     confirmed_sell_days = []
     confirmed_sell_proceeds = float(reverse_mode.get("cumulative_sell_proceeds", 0.0))
+    net_invested = float(state.get("net_invested", 0.0))
 
     def _filled(order):
         try:
@@ -352,18 +362,22 @@ def reconcile_reverse_fills(state, order_history):
         observed_fraction = min(filled_qty / total_qty, 1.0)
         delta_fraction = 0.0
         action = meta.get("reverse_action")
+        delta_amount = 0.0
+        try:
+            cumulative_amount = float(order.get("ft_ccld_amt3", "0"))
+            previous_amount = float(meta.get("processed_filled_amount", 0.0))
+            delta_amount = max(0.0, cumulative_amount - previous_amount)
+        except (TypeError, ValueError):
+            pass
         if action == "sell":
             factor = float(meta.get("reverse_t_factor", 1.0))
             previous_fraction = min(float(meta.get("applied_fill_fraction", 0.0)), 1.0)
             delta_fraction = max(0.0, observed_fraction - previous_fraction)
             base_t = float(meta.get("reverse_base_t", state.get("T", 0.0)))
             state["T"] = float(state.get("T", 0.0)) - base_t * (1.0 - factor) * delta_fraction
-            try:
-                cumulative_amount = float(order.get("ft_ccld_amt3", "0"))
-                previous_amount = float(meta.get("processed_filled_amount", 0.0))
-                confirmed_sell_proceeds += max(0.0, cumulative_amount - previous_amount)
-            except (TypeError, ValueError):
-                pass
+            confirmed_sell_proceeds += delta_amount
+            # 리버스 매도 체결 → 순투입 감소 (매도대금 회수)
+            net_invested -= delta_amount
             terminal = _is_terminal_reverse_order(order)
             status = str(order.get("prcs_stat_name", ""))
             if filled_qty > 0 and terminal and "거부" not in status:
@@ -374,6 +388,8 @@ def reconcile_reverse_fills(state, order_history):
             previous_fraction = min(float(meta.get("applied_fill_fraction", 0.0)), 1.0)
             delta_fraction = max(0.0, observed_fraction - previous_fraction)
             state["T"] = float(state.get("T", 0.0)) + float(meta.get("reverse_t_target", 0.0)) * delta_fraction
+            # 리버스 쿼터매수 체결 → 순투입 증가
+            net_invested += delta_amount
             if _is_terminal_reverse_order(order):
                 meta["terminal"] = True
 
@@ -405,6 +421,7 @@ def reconcile_reverse_fills(state, order_history):
         )
     reverse_mode["cumulative_sell_proceeds"] = round(confirmed_sell_proceeds, 2)
     state["T"] = round(float(state.get("T", 0.0)), 4)
+    state["net_invested"] = round(max(0.0, net_invested), 2)
     reverse_mode["cumulative_sell_proceeds"] = round(confirmed_sell_proceeds, 2)
     cycle_meta = [
         meta for meta in orders_meta.values()
@@ -473,6 +490,21 @@ def update_T_from_history(symbol, state, order_history, balance_qty=None):
             except Exception:
                 print(f"[상태] {symbol} last_updated 파싱 실패: {last_updated} → 초기 모드로 처리")
                 last_updated_dt = None
+
+    # net_invested 마이그레이션: 이전 상태 파일에 필드가 없으면 이력에서 1회 백필합니다.
+    # 리버스 주문은 아래 reconcile_reverse_fills()가 델타로 반영하므로 여기선 비리버스만 계산합니다.
+    # 일반 모드에서는 last_updated 이전 체결만 기준으로 삼아 아래 _apply_recent_history_dt의
+    # 증분 누적과 이중 가산이 없도록 합니다. 초기 모드(last_updated_dt=None)는 _infer가 재계산합니다.
+    if state.get("_net_invested_missing"):
+        state.pop("_net_invested_missing", None)
+        backfilled = _compute_non_reverse_net_invested(
+            state, order_history, cutoff_dt=last_updated_dt, last_processed_ordno=last_processed_ordno
+        )
+        if backfilled is not None:
+            state["net_invested"] = backfilled
+            print(f"[상태] {symbol} net_invested 마이그레이션 백필 → ${state['net_invested']:.2f}")
+        else:
+            state["net_invested"] = 0.0
 
     if last_updated_dt is None:
         # 초기 모드: 전체 이력에서 T를 처음부터 재계산합니다
@@ -574,6 +606,93 @@ def _compute_net_qty_up_to(order_history, cutoff_dt):
     return max(0, qty)
 
 
+def _fill_amount(order):
+    """주문 이력 항목의 체결금액(USD)을 안전하게 파싱합니다."""
+    try:
+        return float(order.get("ft_ccld_amt3", "0") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _compute_non_reverse_net_invested(state, order_history, cutoff_dt=None, last_processed_ordno=""):
+    """
+    현재 사이클의 비리버스 순투입 금액(Σ 매수체결금액 − Σ 매도체결금액, USD)을
+    이력 전체에서 재계산합니다.
+
+    - 전량매도(사이클 종료)를 만나면 0으로 리셋한 뒤 새 사이클부터 다시 누적합니다.
+    - 리버스모드 주문은 reconcile_reverse_fills()가 별도 반영하므로 여기서 제외합니다.
+    - 이력이 없으면 None을 반환합니다 (호출부가 기존 영속값을 유지하도록).
+    - cutoff_dt가 주어지면 그 시각 이전 체결만 기준으로 삼습니다
+      (마이그레이션 백필: _apply_recent_history_dt의 증분 누적과 중복을 피하기 위함).
+    """
+    def _before_cutoff(o):
+        """_apply_recent_history_dt의 포함 규칙(o_dt > cutoff 또는 == cutoff & odno > last)과
+        정확히 상보적인지 검사합니다. (백필은 _apply가 처리할 최근분을 제외해야 함)"""
+        if cutoff_dt is None:
+            return True
+        odt_iso = o.get("ord_datetime_utc")
+        if not odt_iso:
+            return False
+        try:
+            o_dt = datetime.fromisoformat(odt_iso)
+            if o_dt.tzinfo is None:
+                o_dt = o_dt.replace(tzinfo=ZoneInfo("UTC"))
+            else:
+                o_dt = o_dt.astimezone(ZoneInfo("UTC"))
+        except Exception:
+            return False
+        if o_dt < cutoff_dt:
+            return True
+        if o_dt > cutoff_dt:
+            return False
+        odno = str(o.get("odno", ""))
+        if not odno or not last_processed_ordno:
+            return not bool(odno and odno == last_processed_ordno)
+        try:
+            return int(odno) <= int(last_processed_ordno)
+        except Exception:
+            return odno <= last_processed_ordno
+
+    filled_orders = []
+    for o in order_history:
+        try:
+            qty = int(float(o.get("ft_ccld_qty", "0")))
+        except (TypeError, ValueError):
+            qty = 0
+        if qty <= 0 or not o.get("ord_datetime_utc"):
+            continue
+        if cutoff_dt is not None and not _before_cutoff(o):
+            continue
+        filled_orders.append(o)
+    if not filled_orders:
+        return None
+
+    filled_orders.sort(key=lambda o: (o.get("ord_datetime_utc", ""), o.get("odno", "")))
+    net_qty = 0
+    net_invested = 0.0
+    for o in filled_orders:
+        if _is_reverse_order(state, str(o.get("odno", "")), o):
+            continue
+        side = o.get("sll_buy_dvsn_cd_name", "")
+        qty = int(float(o.get("ft_ccld_qty", "0")))
+        try:
+            amt = float(o.get("ft_ccld_amt3", "0") or 0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if side == "매수":
+            net_qty += qty
+            net_invested += amt
+        elif side == "매도":
+            if net_qty > 0 and qty >= net_qty:
+                # 전량매도 → 사이클 종료 → 새 사이클 시작
+                net_qty = 0
+                net_invested = 0.0
+            else:
+                net_qty = max(0, net_qty - qty)
+                net_invested -= amt
+    return round(max(0.0, net_invested), 2)
+
+
 def _infer_T_from_full_history(symbol, state, order_history):
     """
     전체 주문 이력을 처음부터 스캔하여 T값을 추정합니다.
@@ -610,6 +729,7 @@ def _infer_T_from_full_history(symbol, state, order_history):
         state["T"] = 0.0
         state["last_updated"] = ""
         state["last_processed_ordno"] = ""
+        state["net_invested"] = float(state.get("net_invested", 0.0))
         return state
 
     # ord_datetime_utc로 정렬 (오래된 순)
@@ -783,6 +903,15 @@ def _infer_T_from_full_history(symbol, state, order_history):
         state["cycle_start_date"] = cycle_start
 
     state["T"] = round(T, 4)
+
+    # 비리버스 순투입은 이력에서 재계산하고, 리버스 주문은 호출부의
+    # reconcile_reverse_fills()가 델타로 반영합니다.
+    computed = _compute_non_reverse_net_invested(state, order_history)
+    if computed is not None:
+        state["net_invested"] = computed
+        print(f"[상태] {symbol} 순투입(비리버스) 이력 재계산 → ${state['net_invested']:.2f}")
+    else:
+        state["net_invested"] = float(state.get("net_invested", 0.0))
 
     if T > 0:
         print(f"[상태] {symbol} T 추정 완료 → T={state['T']} (사이클 시작: {state.get('cycle_start_date', '알 수 없음')})")
@@ -990,6 +1119,7 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
 
     T = state.get("T", 0.0)
     additional_loc_odno = state.get("additional_loc_odno", [])
+    net_invested = float(state.get("net_invested", 0.0))
 
     # 매도 분류를 위해 기준 시점의 순보유수량을 미리 계산합니다
     net_qty = _compute_net_qty_up_to(order_history, last_updated_dt)
@@ -1053,6 +1183,10 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
         # 전량매도: 보유량 100% → 비율 >= 1.0 → T = 0 (사이클 종료)
         for o_dt, odno, order in day_sells:
             sell_qty = int(float(order.get("ft_ccld_qty", "0")))
+            try:
+                sell_amt = float(order.get("ft_ccld_amt3", "0") or 0)
+            except (TypeError, ValueError):
+                sell_amt = 0.0
             if net_qty > 0:
                 ratio = sell_qty / net_qty
                 if ratio >= 1.0:
@@ -1061,15 +1195,19 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
                         state["_completed_cycle_start"] = completed_start
                     T = 0.0
                     state["cycle_start_date"] = ""
+                    net_invested = 0.0
                     print(f"  → 매도 체결 ({ord_dt}): 전량매도 (비율={ratio:.2f}) → T=0")
                 elif ratio >= 0.5:
                     T = round(T * 0.25, 4)
+                    net_invested -= sell_amt
                     print(f"  → 매도 체결 ({ord_dt}): 목표매도 (비율={ratio:.2f}) → T={T}")
                 else:
                     T = round(T * 0.75, 4)
+                    net_invested -= sell_amt
                     print(f"  → 매도 체결 ({ord_dt}): 쿼터매도 (비율={ratio:.2f}) → T={T}")
             else:
                 T = round(T * 0.75, 4)
+                net_invested -= sell_amt
                 print(f"  → 매도 체결 ({ord_dt}): 쿼터매도 (보유수량 불명) → T={T}")
             net_qty = max(0, net_qty - sell_qty)
             if o_dt > last_dt_processed:
@@ -1093,6 +1231,7 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
 
         for o_dt, odno, order in skip_buys:
             net_qty += int(float(order.get("ft_ccld_qty", "0")))
+            net_invested += _fill_amount(order)
             print(f"  → 매수 체결 ({ord_dt}): 추가매수(odno={odno}) 제외 → T 변경 없음")
             if o_dt > last_dt_processed:
                 last_dt_processed = o_dt
@@ -1129,6 +1268,7 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
                     meta["processed_filled_qty"] = processed + new_filled
                     print(f"  → 매수 체결 ({ord_dt}): odno={odno} t_target={meta.get('t_target')} 부분체결({new_filled}/{total_qty}) → ΔT={delta_T} → T={T}")
                 net_qty += qty
+                net_invested += _fill_amount(order)
                 if o_dt > last_dt_processed:
                     last_dt_processed = o_dt
                     last_ordno_processed = odno or last_ordno_processed
@@ -1143,6 +1283,7 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
                 print(f"  → 매수 체결 ({ord_dt}): 미등록매수 {buy_count}건 → T += {delta_T} → T={T}")
                 for o_dt, odno, order in unregistered_buys:
                     net_qty += int(float(order.get("ft_ccld_qty", "0")))
+                    net_invested += _fill_amount(order)
                     if o_dt > last_dt_processed:
                         last_dt_processed = o_dt
                         last_ordno_processed = odno or last_ordno_processed
@@ -1150,11 +1291,12 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
                         last_ordno_processed = odno
 
     state["T"] = round(T, 4)
+    state["net_invested"] = round(max(0.0, net_invested), 2)
     try:
         state["last_updated"] = last_dt_processed.isoformat()
         state["last_processed_ordno"] = last_ordno_processed or ""
     except Exception:
         pass
 
-    print(f"[상태] {symbol} T값 업데이트 완료 → T={state['T']}")
+    print(f"[상태] {symbol} T값 업데이트 완료 → T={state['T']}, 순투입 ${state['net_invested']:.2f}")
     return state

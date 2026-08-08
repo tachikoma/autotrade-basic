@@ -1,7 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-06-25
-**Updated:** 2026-08-01
+**Updated:** 2026-08-08
 **Branch:** `develop`
 
 ## OVERVIEW
@@ -132,6 +132,17 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 - LS 조회 TR(g3101 등)은 초당 1회, 주문 TR은 초당 10회 rate-limit (모의/실전 동일)
 - 복리 재투자: `REINVEST` 기본 활성화 (해제 시 `false`)
 - **시드 설정 필수**: 모든 종목에 `{SYMBOL}_SEED` 설정 필수 (달러 금액만 허용, FULL 미지원)
+- **순투입(net_invested) 시드 캡** (`state.json`의 `net_invested`): 시드 캡은
+  `remaining_seed = seed − net_invested` (net_invested = Σ 매수체결금액 − Σ 매도체결금액, USD) 기준.
+  - 배경: 기존 `seed − position_qty×avg_price`(원가 기준)는 **평단 이하 매도(손절)** 시 매도 회수액이
+    원가보다 작아 시드 여유가 부풀려져 누적 투입이 시드를 초과할 수 있었음
+    (실제 사례: $50,000 시드 vs $56,299.66 사용).
+  - 누적 경로: 일반모드 `_apply_recent_history_dt`(증분), 초기모드 `_infer_T_from_full_history`(재계산),
+    리버스 `reconcile_reverse_fills`(델타). 전량매도(사이클 종료) 시 0.0 리셋.
+  - 마이그레이션: `load_state`가 `net_invested` 키 없음 감지(`_net_invested_missing`) →
+    `update_T_from_history`에서 `_compute_non_reverse_net_invested(cutoff_dt=last_updated)`로 1회 백필.
+    cutoff는 `_apply`의 최근 윈도우와 상보적이어서 **이중 가산 없음**.
+  - 리버스 주문은 `_compute_non_reverse_net_invested`에서 제외, reconcile이 델타 반영.
 - **KIWOOM/LS/TOSS**: `BROKER_CONFIG`에 `account_no` 불필요 (AppKey/Secret만으로 API 호출 가능)
 - **주문 시각**: 모든 브로커에서 `get_kst_now()` 사용 (API 응답 시간 미사용)
 - **KIS ODNO 정규화**: 주문 접수 API는 leading zero 10자리(`0000052248`), 체결 조회는 trimmed(`52248`) 반환 → `kis/adapter.py`에서 `str(int(odno))`로 정규화 후 반환 (다른 브로커는 해당 없음)
@@ -156,6 +167,13 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
       `ord_dt=미국영업일`을 추정 중이나, CI가 실제 체결(fill)을 생산하지 않음.
       `resolve_real_kst_from_ord` 보정은 display-only이므로 안전하나, 실전 배포 전
       반드시 실전 API 응답으로 `ord_dt` 의미를 1회 검증할 것.
+  - **리버스 reconciliation 날짜 매칭** (`state.py` `_order_real_kst_date`): `reconcile_reverse_fills._order_for_meta`와
+    `_is_reverse_order`가 `ord_dt == submitted_at[:8]`로 **제출일(KST) vs 이력일(ET영업일)**을 비교하던 것을,
+    `resolve_real_kst_from_ord(ord_dt, ord_tmd)`로 실제 KST 날짜를 복원해 비교하도록 수정.
+    버그 사례(SOXL 모의 odno=000004615): 8/6 04:16 KST 제출(`submitted_at=20260806041650`)한 리버스 1일차
+    MOC→LIMIT 매도가 이력에 `ord_dt=20260805`(ET영업일)로 기록 → 날짜 하루 차이로 "리버스 주문 이력 누락" 오판 →
+    신규 주문 영구 차단 + 리버스 매도가 일반 쿼터매도(×0.75)로 오분류되어 T=15 오반영(정상 ×0.9 → 18).
+    복구: `STATE_REPAIR_TARGET_T=20`으로 T만 보정 후 다음 RUN의 reconciliation이 재계산.
 - **ORDER_HISTORY_VERBOSE=true**: LIVE 모드에서도 `[주문이력 요약]` 상세 출력 (DRY는 항상 출력). KIS/KIWOOM/LS/TOSS 공통
 - **텔레그램 재시도**: `send_telegram()`은 타임아웃/연결 오류/서버 5xx 시 최대 3회 재시도(1초 간격). 4xx(설정 오류 등)는 재시도 없이 즉시 실패
 - **T 보정 환경변수**:
@@ -181,6 +199,7 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
   - **실전 pre-market MOC/LOC 제출 미실증**: `trading_bot.py`는 실전에서 pre-market(ET ~04:00)까지 대기 후 주문. MOC/LOC(마감가 주문)는 통상 정규장에만 접수되므로 ET 04:00 제출 시 브로커가 거부/보류할 수 있음. KIS(33)/LS(M4)/KIWOOM(33) 실전의 "MOC+가격" 전송 및 TOSS CLS 주문의 pre-market 접수 여부는 **실전 배포 전 1회 검증 필요**
 - **STATE_DIAGNOSTIC_ONLY=true**: GitHub Actions 캐시의 T/reverse_mode 상태만 출력하고 브로커 API, 전략, 주문을 실행하지 않음. 일회성 진단 후 즉시 해제
 - **STATE_REPAIR_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 리버스 상태를 1회 초기화. `STATE_REPAIR_*` 변수는 실행 직후 삭제
+  - `STATE_REPAIR_TARGET_T={value}` (선택): 기본 초기화 대신 **T만 보정**하고 리버스 cycle/orders_meta를 보존. ord_dt vs submitted_at 날짜 컨벤션 버그로 오반영된 T(예: 20→15)를 되돌려 다음 RUN의 `reconcile_reverse_fills`가 체결 기반으로 재계산(예: 20→18)하도록 하는 용도. fingerprint는 기존과 동일하게 필요
 - **STATE_CLEAR_FENCE_ONLY=true**: 지정 fingerprint가 일치할 때만 API/전략/주문 없이 주문 fence(`pending_order_intent`/`pending_order_batch`)를 1회 초기화. `STATE_CLEAR_FENCE_SYMBOL` + `STATE_CLEAR_FENCE_EXPECT_T`/`EXPECT_LAST_UPDATED`/`EXPECT_INTENT`/`EXPECT_BATCH` 필요 (intent/batch는 빈 값 = "fence 없음" 의미, env var 존재만 필수). 실행 직후 변수 삭제
 - **LIVE 주문 fence**: 주문 전 `pending_order_batch`/`pending_order_intent`를 캐시에 저장하며, fence가 남아 있어도 **전체 중단하지 않고** 해당 종목만 복구를 시도합니다 (다른 종목은 계속 진행)
   - **미접수 확정(`OrderNotAcceptedError`)**: 브로커가 명시적으로 거부(사전검증 실패 또는 거부 응답)해 주문이 접수되지 않았음이 보장되면 fence를 해제하고 해당 종목의 남은 주문만 중단 → 다음 종목 계속 진행
