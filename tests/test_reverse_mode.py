@@ -391,3 +391,98 @@ def test_canceled_partial_sell_is_terminal_and_advances_day():
 
     assert state["T"] == 19.0
     assert state["reverse_mode"]["day_count"] == 1
+
+
+def test_reconcile_matches_moc_fill_with_off_by_one_ord_dt():
+    """MOC/LOC 주문은 제출 KST일 vs 이력 ord_dt(ET 영업일)이 하루 어긋나도 누락 오판 없이 반영돼야 합니다.
+
+    봇은 KST 04:xx(=전일 ET 15:xx)에 주문하므로 이력 ord_dt는 제출일의 전일입니다.
+    이전 버그: _order_for_meta가 ord_dt == submitted_at[:8]로 비교해 미스매치 →
+    '리버스 주문 이력 누락' 오판으로 신규 주문을 영구 차단했습니다.
+    """
+    state = {
+        "T": 20.0,
+        "reverse_mode": {"active": True, "cycle_id": "C6", "day_count": 0},
+        "orders_meta": {
+            "000004615": {
+                "side": "SELL",
+                "total_qty": 32,
+                "processed_filled_qty": 0,
+                "reverse_action": "sell",
+                "reverse_day": 1,
+                "reverse_base_t": 20.0,
+                "reverse_t_factor": 0.9,
+                "cycle_id": "C6",
+                "submitted_at": "20260806041650",
+                "submitted_session": "2026-08-05",
+            }
+        },
+    }
+    history = [{
+        "odno": "000004615",
+        "ord_dt": "20260805",           # 미국(ET) 영업일 — submitted_at(08-06)과 하루 차이
+        "ord_tmd": "041650",            # KST 시각
+        "ord_datetime_utc": "2026-08-04T19:16:50+00:00",
+        "sll_buy_dvsn_cd_name": "매도",
+        "ft_ccld_qty": "32",
+        "ft_ccld_unpr3": "136.77",
+        "ft_ccld_amt3": "4376.64",
+        "nccs_qty": "0",
+        "prcs_stat_name": "체결",
+    }]
+
+    reconcile_reverse_fills(state, history)
+
+    assert state["reverse_mode"].get("reconciliation_error") is None
+    assert state["reverse_mode"].get("reconciliation_only") is None
+    assert state["T"] == 18.0
+    assert state["reverse_mode"]["day_count"] == 1
+    assert state["reverse_mode"]["cumulative_sell_proceeds"] == 4376.64
+
+
+def test_generic_path_skips_reverse_moc_fill_with_off_by_one_ord_dt():
+    """제출일과 이력 ord_dt가 하루 어긋난 리버스 매도가 일반 쿼터매도로 오분류되지 않아야 합니다.
+
+    이전 버그: _is_reverse_order의 날짜 가드가 미스매치로 False 반환 → 리버스 매도가
+    일반 쿼터매도(×0.75)로 처리되어 T=15로 오반영됐습니다. 수정 후에는 리버스 경로(×0.9)로
+    T=18이 되어야 합니다.
+    """
+    state = {
+        "T": 20.0,
+        "last_updated": "2026-07-29T19:16:45+00:00",
+        "last_processed_ordno": "000004932",
+        "reverse_mode": {"active": True, "cycle_id": "C7", "day_count": 0},
+        "orders_meta": {
+            "000004615": {
+                "side": "SELL",
+                "total_qty": 32,
+                "processed_filled_qty": 0,
+                "reverse_action": "sell",
+                "reverse_day": 1,
+                "reverse_base_t": 20.0,
+                "reverse_t_factor": 0.9,
+                "cycle_id": "C7",
+                "submitted_at": "20260806041650",
+                "submitted_session": "2026-08-05",
+            }
+        },
+    }
+    history = [{
+        "odno": "000004615",
+        "ord_dt": "20260805",
+        "ord_tmd": "041650",
+        "ord_datetime_utc": "2026-08-04T19:16:50+00:00",
+        "sll_buy_dvsn_cd_name": "매도",
+        "ft_ccld_qty": "32",
+        "ft_ccld_unpr3": "136.77",
+        "ft_ccld_amt3": "4376.64",
+        "nccs_qty": "0",
+        "prcs_stat_name": "체결",
+    }]
+
+    update_T_from_history("SOXL", state, history, balance_qty=293)
+
+    assert state["T"] == 18.0
+    assert state["reverse_mode"]["day_count"] == 1
+    assert state["reverse_mode"].get("reconciliation_error") is None
+    assert state["reverse_mode"].get("reconciliation_only") is None

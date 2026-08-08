@@ -9,6 +9,8 @@ from collections import defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from broker.market_utils import resolve_real_kst_from_ord
+
 # 상태 파일 위치: 프로젝트 루트의 .state.json
 _STATE_FILE = os.path.join(os.path.dirname(__file__), "..", ".state.json")
 
@@ -207,11 +209,29 @@ def get_order_meta(state, odno):
     return state.get("orders_meta", {}).get(str(odno))
 
 
+def _order_real_kst_date(order):
+    """주문이력의 실제 KST 날짜(YYYYMMDD)를 복원합니다.
+
+    봇은 KST 장중(04:xx, 현지 ET 전일 15:xx)에 주문하므로 실제 KST 날짜는
+    ord_dt 또는 ord_dt+1입니다. resolve_real_kst_from_ord가 ET round-trip으로
+    복원하며, ord_tmd가 없거나 복원에 실패하면 ord_dt를 그대로 반환합니다
+    (해당 브로커가 ord_dt=KST 날짜 컨벤션인 경우에도 동일하게 동작).
+    """
+    ord_dt = str(order.get("ord_dt", ""))
+    ord_tmd = str(order.get("ord_tmd", ""))
+    if not ord_dt or not ord_tmd:
+        return ord_dt
+    resolved = resolve_real_kst_from_ord(ord_dt, ord_tmd)
+    if resolved is None:
+        return ord_dt
+    return resolved.strftime("%Y%m%d")
+
+
 def _is_reverse_order(state, odno, order=None):
     """주문 메타데이터상 리버스모드 주문인지 확인합니다."""
     meta = state.get("orders_meta", {}).get(str(odno), {})
     if order is not None and meta.get("submitted_at"):
-        if str(order.get("ord_dt", "")) != str(meta["submitted_at"])[:8]:
+        if _order_real_kst_date(order) != str(meta["submitted_at"])[:8]:
             return False
     return bool(meta.get("reverse_action"))
 
@@ -261,7 +281,7 @@ def reconcile_reverse_fills(state, order_history):
         if submitted_at:
             candidates = [
                 order for order in candidates
-                if str(order.get("ord_dt", "")) == submitted_at[:8]
+                if _order_real_kst_date(order) == submitted_at[:8]
             ]
         if not candidates:
             return None
