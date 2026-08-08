@@ -201,6 +201,8 @@ jobs:
           STATE_REPAIR_EXPECT_LAST_ORDNO: ${{ vars.STATE_REPAIR_EXPECT_LAST_ORDNO }}
           STATE_REPAIR_EXPECT_REVERSE_IDS: ${{ vars.STATE_REPAIR_EXPECT_REVERSE_IDS }}
           STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT: ${{ vars.STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT }}
+          # T만 보정하고 리버스 cycle을 유지하는 일회성 복구 (오반영 T 되돌리기)
+          STATE_REPAIR_TARGET_T: ${{ vars.STATE_REPAIR_TARGET_T }}
 
           # 기대 fingerprint가 일치할 때만 주문 fence를 1회 초기화하는 일회성 복구 모드
           STATE_CLEAR_FENCE_ONLY: ${{ vars.STATE_CLEAR_FENCE_ONLY || 'false' }}

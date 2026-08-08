@@ -996,7 +996,13 @@ def _has_unresolved_reverse_orders(state):
 
 
 def _repair_state_only():
-    """기대 fingerprint가 일치할 때만 오염된 리버스 상태를 초기화합니다."""
+    """기대 fingerprint가 일치할 때만 오염된 리버스 상태를 초기화합니다.
+
+    STATE_REPAIR_TARGET_T가 설정되면 reverse_mode 초기화 대신 **T만 보정**하고
+    리버스 cycle을 유지합니다. 이는 날짜 컨벤션 버그로 오반영된 T(예: 20→15)를
+    되돌려, 다음 RUN의 reconciliation이 체결 기반으로 정상 재계산(예: 20→18)하도록
+    하기 위한 일회성 복구입니다. 실행 직후 변수 삭제 필수.
+    """
     symbol = os.getenv("STATE_REPAIR_SYMBOL", "").strip().upper()
     expected_t = os.getenv("STATE_REPAIR_EXPECT_T", "").strip()
     expected_day = os.getenv("STATE_REPAIR_EXPECT_DAY_COUNT", "").strip()
@@ -1005,6 +1011,7 @@ def _repair_state_only():
     expected_ordno = os.getenv("STATE_REPAIR_EXPECT_LAST_ORDNO", "").strip()
     expected_reverse_ids_raw = os.getenv("STATE_REPAIR_EXPECT_REVERSE_IDS", "").strip()
     expected_reverse_submitted_at = os.getenv("STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT", "").strip()
+    target_t = os.getenv("STATE_REPAIR_TARGET_T", "").strip()
     expected_reverse_ids = sorted(filter(None, expected_reverse_ids_raw.split(",")))
     required = {
         "STATE_REPAIR_SYMBOL": symbol,
@@ -1047,6 +1054,15 @@ def _repair_state_only():
     }
     if actual != expected:
         raise RuntimeError(f"복구 fingerprint 불일치: actual={actual}, expected={expected}")
+
+    if target_t:
+        # T만 보정하고 리버스 cycle/orders_meta를 보존 → 다음 RUN의
+        # reconcile_reverse_fills가 체결 이력 기준으로 T/day_count를 재계산합니다.
+        print(f"[상태 복구] {symbol} T 보정: {state['T']} → {float(target_t)} (리버스 cycle 유지, reconciliation 재계산 예정)")
+        state["T"] = float(target_t)
+        save_state(symbol, state)
+        print(f"[상태 복구] {symbol} T={target_t}로 보정 완료. 다음 RUN에서 reconciliation이 체결 기반으로 재계산합니다.")
+        return
 
     print(f"[상태 복구] {symbol} reverse_mode 초기화: {reverse_mode}")
     state["reverse_mode"] = {}
