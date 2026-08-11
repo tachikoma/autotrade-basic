@@ -158,6 +158,9 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
     - `STATE_NET_INVESTED_REPAIR_ONLY=true`: canonical `state_hash` + 필드 fingerprint(CAS)가
       일치할 때만 `net_invested`를 명시 값으로 복구하고 `valid` 전환. 미종결 리버스 주문/fence 있으면 거부.
       `STATE_NET_INVESTED_REPAIR_SYMBOL`/`_TARGET`/`_EXPECT_HASH`/`_EXPECT_NET_INVESTED`/`_EXPECT_STATUS` 필요.
+    - `STATE_ASSUME_REVERSE_EXPIRY_ONLY=true`: **키움 모의 전용**. 이전 미국 세션의 zero-fill 리버스 주문을
+      `terminal_assumed=true`로 1회성 종결 처리한 뒤 reconcile/repair를 진행할 때 사용합니다.
+      실전/다른 브로커에서는 거부되며 `STATE_ASSUME_REVERSE_EXPIRY_SYMBOL`/`_ORDER`/`_EXPECT_HASH` 필요.
   - `canonical_state_hash()` (`src/state.py`): `save_state()`가 기록하는 필드만 SHA-256 — 복구 CAS/audit용.
     세 복구 모드(`STATE_REVERSE_AUDIT_ONLY`/`RECONCILE_ONLY`/`NET_INVESTED_REPAIR_ONLY`)는 **동시 설정 금지**.
 - **KIWOOM/LS/TOSS**: `BROKER_CONFIG`에 `account_no` 불필요 (AppKey/Secret만으로 API 호출 가능)

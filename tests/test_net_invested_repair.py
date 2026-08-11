@@ -23,7 +23,7 @@ if _repo_root not in sys.path:
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
 
-from trading_bot import _net_invested_repair_only
+from trading_bot import _assume_reverse_expiry_only, _net_invested_repair_only
 from state import canonical_state_hash
 import strategy
 from broker.base import StockPrice, StockQuotation, Balance
@@ -212,3 +212,31 @@ class TestNetInvestedRepairOnly:
         assert state["reverse_mode"]["day_count"] == 2
         assert state["orders_meta"]["000005315"]["processed_filled_amount"] == 3910.05
         mock_save.assert_called_once()
+
+
+class TestAssumeReverseExpiryOnly:
+    def test_키움_모의_이전세션_zero_fill을_terminal_assumed로_처리(self, monkeypatch):
+        state = _make_state()
+        state["orders_meta"]["000005316"]["terminal"] = False
+        expected_hash = canonical_state_hash(state)
+        monkeypatch.setenv("STATE_ASSUME_REVERSE_EXPIRY_SYMBOL", "SOXL")
+        monkeypatch.setenv("STATE_ASSUME_REVERSE_EXPIRY_ORDER", "000005316")
+        monkeypatch.setenv("STATE_ASSUME_REVERSE_EXPIRY_EXPECT_HASH", expected_hash)
+        with patch("trading_bot.BROKER", "kiwoom"), \
+             patch("trading_bot.BROKER_MODE", "demo"), \
+             patch("trading_bot.load_state", return_value=state), \
+             patch("trading_bot.save_state") as mock_save:
+            _assume_reverse_expiry_only()
+        meta = state["orders_meta"]["000005316"]
+        assert meta["terminal"] is True
+        assert meta["terminal_assumed"] is True
+        mock_save.assert_called_once()
+
+    def test_실전에서는_거부(self, monkeypatch):
+        monkeypatch.setenv("STATE_ASSUME_REVERSE_EXPIRY_SYMBOL", "SOXL")
+        monkeypatch.setenv("STATE_ASSUME_REVERSE_EXPIRY_ORDER", "000005316")
+        monkeypatch.setenv("STATE_ASSUME_REVERSE_EXPIRY_EXPECT_HASH", "hash")
+        with patch("trading_bot.BROKER", "kiwoom"), \
+             patch("trading_bot.BROKER_MODE", "real"):
+            with pytest.raises(RuntimeError, match="키움 모의투자"):
+                _assume_reverse_expiry_only()

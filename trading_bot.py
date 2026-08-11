@@ -20,7 +20,7 @@ sys.path.append("src")
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from config import SYMBOLS, TRADE_MODE, COMMISSION_RATE, REINVEST, BROKER_MODE, LS_DEMO_BYPASS_BUGS, ORDER_HISTORY_VERBOSE
+from config import SYMBOLS, TRADE_MODE, COMMISSION_RATE, REINVEST, BROKER, BROKER_MODE, LS_DEMO_BYPASS_BUGS, ORDER_HISTORY_VERBOSE
 from broker import create_broker
 from broker.base import Broker, OrderResult, OrderNotAcceptedError
 from broker.market_utils import get_kst_now, is_us_dst, is_us_trading_day
@@ -35,6 +35,7 @@ STATE_CLEAR_FENCE_ONLY = os.getenv("STATE_CLEAR_FENCE_ONLY", "").strip().lower()
 STATE_REVERSE_AUDIT_ONLY = os.getenv("STATE_REVERSE_AUDIT_ONLY", "").strip().lower() == "true"
 STATE_REVERSE_RECONCILE_ONLY = os.getenv("STATE_REVERSE_RECONCILE_ONLY", "").strip().lower() == "true"
 STATE_NET_INVESTED_REPAIR_ONLY = os.getenv("STATE_NET_INVESTED_REPAIR_ONLY", "").strip().lower() == "true"
+STATE_ASSUME_REVERSE_EXPIRY_ONLY = os.getenv("STATE_ASSUME_REVERSE_EXPIRY_ONLY", "").strip().lower() == "true"
 
 
 def generate_cycle_report(symbol, order_history, state, seed, commission_rate):
@@ -1272,6 +1273,57 @@ def _net_invested_repair_only():
     print(f"[net_invested 복구] {symbol} net_invested=${target:.2f}/valid 저장 완료.")
 
 
+def _assume_reverse_expiry_only():
+    """키움 모의의 이전 세션 zero-fill 주문을 정책상 종결 처리합니다.
+
+    API가 ``접수``/잔량을 유지하는 모의투자 LIMIT 주문에만 사용하는 일회성 모드입니다.
+    실전이나 다른 브로커에서는 실행하지 않으며, state hash와 주문 메타를 확인합니다.
+    """
+    def _required(name):
+        raw = os.environ.get(name)
+        if not raw or not raw.strip():
+            raise RuntimeError(f"리버스 만료 가정 환경변수가 없습니다: {name}")
+        return raw.strip()
+
+    if BROKER != "kiwoom" or BROKER_MODE != "demo":
+        raise RuntimeError("리버스 만료 가정은 키움 모의투자에서만 허용됩니다.")
+
+    symbol = _required("STATE_ASSUME_REVERSE_EXPIRY_SYMBOL").upper()
+    odno = _required("STATE_ASSUME_REVERSE_EXPIRY_ORDER")
+    expect_hash = _required("STATE_ASSUME_REVERSE_EXPIRY_EXPECT_HASH")
+    state = load_state(symbol)
+    actual_hash = canonical_state_hash(state)
+    if actual_hash != expect_hash:
+        raise RuntimeError(
+            f"리버스 만료 가정 hash 불일치: actual={actual_hash}, expected={expect_hash}"
+        )
+    if state.get("pending_order_intent") or state.get("pending_order_batch"):
+        raise RuntimeError("리버스 만료 가정 거부: pending 주문 fence가 남아 있습니다.")
+
+    meta = state.get("orders_meta", {}).get(odno)
+    if not meta or not meta.get("reverse_action"):
+        raise RuntimeError(f"리버스 만료 가정 거부: 주문 메타가 없습니다: {odno}")
+    if meta.get("terminal"):
+        print(f"[리버스 만료 가정] {symbol} odno={odno} 이미 terminal입니다.")
+        return
+    if int(meta.get("processed_filled_qty", 0) or 0) != 0:
+        raise RuntimeError("리버스 만료 가정 거부: 이미 체결된 수량이 있습니다.")
+    if float(meta.get("processed_filled_amount", 0.0) or 0.0) != 0.0:
+        raise RuntimeError("리버스 만료 가정 거부: 이미 체결금액이 있습니다.")
+
+    submitted_session = str(meta.get("submitted_session", ""))
+    today_session = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    if not submitted_session or submitted_session >= today_session:
+        raise RuntimeError("리버스 만료 가정 거부: 이전 거래 세션 주문이 아닙니다.")
+
+    meta["terminal"] = True
+    meta["terminal_assumed"] = True
+    meta["terminal_assumed_at"] = datetime.now(ZoneInfo("UTC")).isoformat()
+    meta["terminal_assumption_reason"] = "kiwoom_demo_day_order_expired_after_session"
+    save_state(symbol, state)
+    print(f"[리버스 만료 가정] {symbol} odno={odno}를 terminal_assumed로 저장했습니다.")
+
+
 def _clear_fence_only():
     """기대 fingerprint가 일치할 때만 주문 fence를 1회 초기화합니다.
 
@@ -1348,6 +1400,7 @@ def main():
         "STATE_REVERSE_AUDIT_ONLY": STATE_REVERSE_AUDIT_ONLY,
         "STATE_REVERSE_RECONCILE_ONLY": STATE_REVERSE_RECONCILE_ONLY,
         "STATE_NET_INVESTED_REPAIR_ONLY": STATE_NET_INVESTED_REPAIR_ONLY,
+        "STATE_ASSUME_REVERSE_EXPIRY_ONLY": STATE_ASSUME_REVERSE_EXPIRY_ONLY,
     }
     _enabled = [name for name, enabled in _exclusive_modes.items() if enabled]
     if len(_enabled) > 1:
@@ -1362,6 +1415,9 @@ def main():
         return
     if STATE_NET_INVESTED_REPAIR_ONLY:
         _net_invested_repair_only()
+        return
+    if STATE_ASSUME_REVERSE_EXPIRY_ONLY:
+        _assume_reverse_expiry_only()
         return
 
     # 전체 T 재추정은 주문을 절대 발생시키지 않아야 합니다.
