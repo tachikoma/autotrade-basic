@@ -25,13 +25,16 @@ from broker import create_broker
 from broker.base import Broker, OrderResult, OrderNotAcceptedError
 from broker.market_utils import get_kst_now, is_us_dst, is_us_trading_day
 from strategy import 무한매수법_V4, adjust_price_to_tick
-from state import load_state, save_state, update_T_from_history, compute_position_from_history, register_order_meta_in_state
+from state import load_state, save_state, update_T_from_history, compute_position_from_history, register_order_meta_in_state, canonical_state_hash
 from notifier import notify
 
 
 STATE_DIAGNOSTIC_ONLY = os.getenv("STATE_DIAGNOSTIC_ONLY", "").strip().lower() == "true"
 STATE_REPAIR_ONLY = os.getenv("STATE_REPAIR_ONLY", "").strip().lower() == "true"
 STATE_CLEAR_FENCE_ONLY = os.getenv("STATE_CLEAR_FENCE_ONLY", "").strip().lower() == "true"
+STATE_REVERSE_AUDIT_ONLY = os.getenv("STATE_REVERSE_AUDIT_ONLY", "").strip().lower() == "true"
+STATE_REVERSE_RECONCILE_ONLY = os.getenv("STATE_REVERSE_RECONCILE_ONLY", "").strip().lower() == "true"
+STATE_NET_INVESTED_REPAIR_ONLY = os.getenv("STATE_NET_INVESTED_REPAIR_ONLY", "").strip().lower() == "true"
 
 
 def generate_cycle_report(symbol, order_history, state, seed, commission_rate):
@@ -222,6 +225,12 @@ def run_one_symbol(broker: Broker, symbol_config):
             f"{state['_state_unavailable']}"
         )
 
+    if state.get("net_invested_status", "unresolved") != "valid" and TRADE_MODE == "LIVE":
+        notify(
+            f"[상태] {symbol} net_invested 미확정(unresolved) → 신규 전략 주문을 보류합니다.\n"
+            "STATE_REVERSE_AUDIT_ONLY/reconcile로 상태를 확인하세요."
+        )
+
     force_t = symbol_config.get("force_t")
     max_t = symbol_config.get("max_t")
 
@@ -332,6 +341,7 @@ def run_one_symbol(broker: Broker, symbol_config):
         state["T"] = 0.0
         state["cycle_start_date"] = ""
         state["net_invested"] = 0.0
+        state["net_invested_status"] = "valid"
         state["reverse_mode"] = {}
 
     # T 갱신 후 즉시 상태를 저장하여 다음 실행 시 일관성을 보장합니다.
@@ -374,6 +384,7 @@ def run_one_symbol(broker: Broker, symbol_config):
                 state["T"] = 0.0
                 state["cycle_start_date"] = ""
                 state["net_invested"] = 0.0
+                state["net_invested_status"] = "valid"
                 state["reverse_mode"] = {}
                 save_state(symbol, state)
                 raise RuntimeError(
@@ -477,6 +488,7 @@ def run_one_symbol(broker: Broker, symbol_config):
         if force_t == 0:
             state["cycle_start_date"] = ""
             state["net_invested"] = 0.0
+            state["net_invested_status"] = "valid"
         print(f"[T 보정] {symbol} FORCE_T={force_t} 적용 (이전 T={old_T}), "
               f"orders_meta/balance_mismatch 초기화, last_updated 갱신")
         save_state(symbol, state)
@@ -526,6 +538,7 @@ def run_one_symbol(broker: Broker, symbol_config):
             state["T"] = 0.0
             state["cycle_start_date"] = ""
             state["net_invested"] = 0.0
+            state["net_invested_status"] = "valid"
             state["reverse_mode"] = {}
             T = 0.0
             print("  [DRY] 사이클 종료 리포트 표시. 캐시 저장은 생략합니다. (LIVE 실행 시 실제 리셋/시드 갱신)")
@@ -548,6 +561,7 @@ def run_one_symbol(broker: Broker, symbol_config):
             state["T"] = 0.0
             state["cycle_start_date"] = ""
             state["net_invested"] = 0.0
+            state["net_invested_status"] = "valid"
             state["reverse_mode"] = {}
             save_state(symbol, state)
 
@@ -935,10 +949,13 @@ def _print_state_diagnostic():
             f"T={state.get('T', 0.0)}, "
             f"day_count={reverse_mode.get('day_count', 0)}, "
             f"cumulative_sell_proceeds=${reverse_mode.get('cumulative_sell_proceeds', 0.0):.2f}, "
+            f"net_invested=${state.get('net_invested', 0.0):.2f} "
+            f"({state.get('net_invested_status', 'unresolved')}), "
             f"reverse_order_ids={reverse_order_ids}, "
             f"order_meta_ids={sorted(state.get('orders_meta', {}).keys())}, "
             f"last_updated={state.get('last_updated', '')}, "
-            f"last_processed_ordno={state.get('last_processed_ordno', '')}"
+            f"last_processed_ordno={state.get('last_processed_ordno', '')}, "
+            f"state_hash={canonical_state_hash(state)}"
         )
     print("[상태 진단] 종료합니다. 상태 파일은 변경하지 않았습니다.")
 
@@ -1084,6 +1101,173 @@ def _repair_state_only():
     print(f"[상태 복구] {symbol} T/체결 watermark를 유지하고 리버스 상태만 초기화했습니다.")
 
 
+def _reverse_audit_only():
+    """브로커 주문이력과 state orders_meta를 대조해 리버스 주문 상태만 출력합니다.
+
+    STATE_REVERSE_AUDIT_ONLY=true 로 사용합니다.
+    read-only 모드 — 상태 파일을 저장하지 않으며 전략/주문도 실행하지 않습니다.
+    주문 시각은 통일적으로 KST 기준으로 표시합니다.
+    """
+    import config as runtime_config
+    if runtime_config.TRADE_MODE == "LIVE":
+        runtime_config.TRADE_MODE = "DRY"
+        globals()["TRADE_MODE"] = "DRY"
+        print("[audit] 검증 모드 — 브로커 생성 전 DRY로 고정합니다.")
+
+    broker = create_broker()
+    try:
+        for symbol_config in SYMBOLS:
+            symbol = symbol_config["symbol"]
+            exchange = symbol_config["exchange"]
+            print(f"\n[audit] {symbol} 리버스 주문 상태 감사 (read-only)")
+            state = load_state(symbol)
+            reverse_meta = sorted(
+                (odno, meta) for odno, meta in state.get("orders_meta", {}).items()
+                if meta.get("reverse_action")
+            )
+            if not reverse_meta:
+                print("[audit] 리버스 주문 메타가 없습니다.")
+            order_history = broker.get_order_history(symbol, exchange, days=90, verbose=False)
+            history_by_odno = {}
+            for order in order_history:
+                history_by_odno.setdefault(str(order.get("odno", "")), []).append(order)
+
+            for odno, meta in reverse_meta:
+                candidates = history_by_odno.get(str(odno), [])
+                settled = None
+                if candidates:
+                    settled = max(
+                        candidates,
+                        key=lambda o: float(o.get("ft_ccld_qty", "0") or 0),
+                    )
+                broker_qty = int(float(settled.get("ft_ccld_qty", "0"))) if settled else 0
+                broker_amt = float(settled.get("ft_ccld_amt3", "0") or 0) if settled else 0.0
+                state_qty = int(meta.get("processed_filled_qty", 0))
+                state_amt = float(meta.get("processed_filled_amount", 0.0))
+                terminal = bool(meta.get("terminal"))
+                delta_amt = max(0.0, broker_amt - state_amt)
+                print(
+                    f"  odno={odno} side={meta.get('reverse_action')} day={meta.get('reverse_day')} "
+                    f"submitted={meta.get('submitted_at', '')} session={meta.get('submitted_session', '')} "
+                    f"| 브로커: qty={broker_qty} amt=${broker_amt:.2f} "
+                    f"| state: qty={state_qty} amt=${state_amt:.2f} "
+                    f"| delta_amt=${delta_amt:.2f} terminal={terminal}"
+                )
+            net_invested = float(state.get("net_invested", 0.0))
+            status = state.get("net_invested_status", "unresolved")
+            print(f"[audit] {symbol} net_invested=${net_invested:.2f} ({status})")
+            print(f"[audit] {symbol} canonical state_hash={canonical_state_hash(state)}")
+    finally:
+        broker.close()
+    print("[audit] read-only 모드 — 상태 파일은 변경하지 않았습니다.")
+
+
+def _reverse_reconcile_only():
+    """리버스 주문의 실제 체결 상태만 상태에 반영하고 주문은 생성하지 않습니다.
+
+    STATE_REVERSE_RECONCILE_ONLY=true 로 사용합니다.
+    기존 reconciliation(update_T_from_history → reconcile_reverse_fills)을 실행해
+    미반영 체결(예: 5315 SELL/$3,910.05, 5316 BUY/$0)을 state에 반영하고 저장합니다.
+    전략/주문은 실행하지 않으며, 한번 더 잘못된 주문이 나가지 않도록 DRY로 고정합니다.
+    """
+    import config as runtime_config
+    if runtime_config.TRADE_MODE == "LIVE":
+        runtime_config.TRADE_MODE = "DRY"
+        globals()["TRADE_MODE"] = "DRY"
+        print("[reconcile-only] 검증 모드 — 브로커 생성 전 DRY로 고정합니다.")
+
+    broker = create_broker()
+    try:
+        for symbol_config in SYMBOLS:
+            symbol = symbol_config["symbol"]
+            exchange = symbol_config["exchange"]
+            print(f"\n[reconcile-only] {symbol} 리버스 체결 상태 조정 (주문 없음)")
+            state = load_state(symbol)
+            order_history = broker.get_order_history(symbol, exchange, days=90, verbose=True)
+            try:
+                live_balance = broker.get_balance(symbol, exchange)
+                live_qty = live_balance.quantity if live_balance else 0
+            except Exception as e:
+                print(f"[reconcile-only] 잔고 조회 실패(참고): {e}")
+                live_qty = None
+            state = update_T_from_history(symbol, state, order_history, balance_qty=live_qty)
+            # reconcile은 net_invested를 valid로 승격하지 않습니다 (audit/repair가 담당)
+            save_state(symbol, state)
+            print(
+                f"[reconcile-only] {symbol} 저장 완료 → T={state['T']}, "
+                f"net_invested=${float(state.get('net_invested', 0.0)):.2f} "
+                f"({state.get('net_invested_status', 'unresolved')}), "
+                f"state_hash={canonical_state_hash(state)}"
+            )
+    finally:
+        broker.close()
+    print("[reconcile-only] 주문을 생성하지 않고 상태만 반영했습니다.")
+
+
+def _net_invested_repair_only():
+    """net_invested를 명시 값으로 1회 복구합니다 (CAS, 상태 파일만 수정).
+
+    사용:
+        STATE_NET_INVESTED_REPAIR_ONLY=true
+        STATE_NET_INVESTED_REPAIR_SYMBOL=SOXL
+        STATE_NET_INVESTED_REPAIR_TARGET=54161.72
+        STATE_NET_INVESTED_REPAIR_EXPECT_HASH=<audit에서 출력한 해시>
+        STATE_NET_INVESTED_REPAIR_EXPECT_NET_INVESTED=0.00
+        STATE_NET_INVESTED_REPAIR_EXPECT_STATUS=unresolved
+
+    - 브로커 API/전략/주문은 실행하지 않습니다.
+    - audit 직후의 canonical hash가 일치할 때만 적용합니다 (CAS).
+    - T, watermark, orders_meta, reverse_mode, fence는 보존합니다.
+    - 미종결 리버스 주문 또는 pending fence가 남아 있으면 거부합니다.
+    """
+    def _required(name):
+        raw = os.environ.get(name)
+        if not raw or not raw.strip():
+            raise RuntimeError(f"net_invested 복구 fingerprint 환경변수가 없습니다: {name}")
+        return raw.strip()
+
+    symbol = _required("STATE_NET_INVESTED_REPAIR_SYMBOL").upper()
+    target = float(_required("STATE_NET_INVESTED_REPAIR_TARGET"))
+    expect_hash = _required("STATE_NET_INVESTED_REPAIR_EXPECT_HASH")
+    expect_net_invested = float(_required("STATE_NET_INVESTED_REPAIR_EXPECT_NET_INVESTED"))
+    expect_status = _required("STATE_NET_INVESTED_REPAIR_EXPECT_STATUS")
+
+    state = load_state(symbol)
+    actual_hash = canonical_state_hash(state)
+    actual_net_invested = float(state.get("net_invested", 0.0))
+    actual_status = state.get("net_invested_status", "unresolved")
+
+    if actual_hash != expect_hash:
+        raise RuntimeError(
+            f"net_invested 복구 hash 불일치: actual={actual_hash}, expected={expect_hash}"
+        )
+    if abs(actual_net_invested - expect_net_invested) > 0.005:
+        raise RuntimeError(
+            f"net_invested 복구 필드 불일치: actual={actual_net_invested:.2f}, expected={expect_net_invested:.2f}"
+        )
+    if actual_status != expect_status:
+        raise RuntimeError(
+            f"net_invested 복구 status 불일치: actual={actual_status}, expected={expect_status}"
+        )
+    if _has_unresolved_reverse_orders(state):
+        raise RuntimeError(
+            "net_invested 복구 거부: 미종결 리버스 주문이 남아 있습니다. reconcile/audit을 먼저 진행하세요."
+        )
+    if state.get("pending_order_intent") or state.get("pending_order_batch"):
+        raise RuntimeError(
+            "net_invested 복구 거부: pending 주문 fence가 남아 있습니다. fence 확인 필요."
+        )
+
+    print(
+        f"[net_invested 복구] {symbol} ${actual_net_invested:.2f}({actual_status}) "
+        f"→ ${target:.2f}(valid)로 복구합니다."
+    )
+    state["net_invested"] = round(target, 2)
+    state["net_invested_status"] = "valid"
+    save_state(symbol, state)
+    print(f"[net_invested 복구] {symbol} net_invested=${target:.2f}/valid 저장 완료.")
+
+
 def _clear_fence_only():
     """기대 fingerprint가 일치할 때만 주문 fence를 1회 초기화합니다.
 
@@ -1153,6 +1337,27 @@ def main():
         return
     if STATE_CLEAR_FENCE_ONLY:
         _clear_fence_only()
+        return
+
+    # 리버스 주문 감사/체결 반영/reverse net_invested 복구는 서로 동시에 설정할 수 없습니다.
+    _exclusive_modes = {
+        "STATE_REVERSE_AUDIT_ONLY": STATE_REVERSE_AUDIT_ONLY,
+        "STATE_REVERSE_RECONCILE_ONLY": STATE_REVERSE_RECONCILE_ONLY,
+        "STATE_NET_INVESTED_REPAIR_ONLY": STATE_NET_INVESTED_REPAIR_ONLY,
+    }
+    _enabled = [name for name, enabled in _exclusive_modes.items() if enabled]
+    if len(_enabled) > 1:
+        raise RuntimeError(
+            f"상호 배타적인 복구 모드가 동시에 설정되었습니다: {', '.join(_enabled)}"
+        )
+    if STATE_REVERSE_AUDIT_ONLY:
+        _reverse_audit_only()
+        return
+    if STATE_REVERSE_RECONCILE_ONLY:
+        _reverse_reconcile_only()
+        return
+    if STATE_NET_INVESTED_REPAIR_ONLY:
+        _net_invested_repair_only()
         return
 
     # 전체 T 재추정은 주문을 절대 발생시키지 않아야 합니다.

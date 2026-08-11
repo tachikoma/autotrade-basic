@@ -212,6 +212,20 @@ jobs:
           STATE_CLEAR_FENCE_EXPECT_INTENT: ${{ vars.STATE_CLEAR_FENCE_EXPECT_INTENT }}
           STATE_CLEAR_FENCE_EXPECT_BATCH: ${{ vars.STATE_CLEAR_FENCE_EXPECT_BATCH }}
 
+          # 리버스 주문 상태 감사 (read-only, state 미저장) — 브로커 체결 vs state orders_meta 대조
+          STATE_REVERSE_AUDIT_ONLY: ${{ vars.STATE_REVERSE_AUDIT_ONLY || 'false' }}
+
+          # 리버스 주문의 실제 체결만 state에 반영하고 주문은 생성하지 않는 1회성 조정
+          STATE_REVERSE_RECONCILE_ONLY: ${{ vars.STATE_REVERSE_RECONCILE_ONLY || 'false' }}
+
+          # 기대 fingerprint(hash)가 일치할 때만 net_invested를 명시 값으로 복구하는 1회성 모드
+          STATE_NET_INVESTED_REPAIR_ONLY: ${{ vars.STATE_NET_INVESTED_REPAIR_ONLY || 'false' }}
+          STATE_NET_INVESTED_REPAIR_SYMBOL: ${{ vars.STATE_NET_INVESTED_REPAIR_SYMBOL }}
+          STATE_NET_INVESTED_REPAIR_TARGET: ${{ vars.STATE_NET_INVESTED_REPAIR_TARGET }}
+          STATE_NET_INVESTED_REPAIR_EXPECT_HASH: ${{ vars.STATE_NET_INVESTED_REPAIR_EXPECT_HASH }}
+          STATE_NET_INVESTED_REPAIR_EXPECT_NET_INVESTED: ${{ vars.STATE_NET_INVESTED_REPAIR_EXPECT_NET_INVESTED }}
+          STATE_NET_INVESTED_REPAIR_EXPECT_STATUS: ${{ vars.STATE_NET_INVESTED_REPAIR_EXPECT_STATUS }}
+
           # API 연결 타임아웃 (초 단위, 기본값 30초)
           CONNECT_TIMEOUT: 30
 

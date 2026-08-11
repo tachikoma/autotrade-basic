@@ -305,6 +305,39 @@ def 무한매수법_V4(broker: Broker, symbol, exchange_code, splits, symbol_typ
         }
 
     # ========================================
+    # 1.5 net_invested 신뢰성 게이트
+    # ========================================
+    # net_invested_status != "valid"이면 순투입 값이 신뢰할 수 없다는 뜻입니다.
+    # 시드 캡은 이 값을 기준으로 계산되므로, 신뢰 불가 동안엔 신규 전략 주문을
+    # 생성하지 않고 reconciliation(체결 반영)만 허용합니다.
+    # (SOXL net_invested=0.00 손상 사고 — 시드 캡 왜곡으로 과매수 방지용.)
+    # seed=0이면 시드 캡 경로 자체가 없으므로(아래 `if seed > 0`) 차단하지 않습니다.
+    if seed > 0 and state is not None and (state.get("net_invested_status") or "unresolved") != "valid":
+        print(
+            f"[상태] {symbol} net_invested_status={state.get('net_invested_status', 'unresolved')} → "
+            f"순투입 미확정으로 신규 전략 주문을 보류합니다. (audit/reconcile로 상태 확인 필요)"
+        )
+        return {
+            "symbol": symbol,
+            "exchange": exchange_code,
+            "tradable": tradable,
+            "open_price": open_price,
+            "last_price": last_price,
+            "position_qty": 0,
+            "avg_price": 0.0,
+            "orderable_cash": 0.0,
+            "seed": seed,
+            "remaining_seed": None,
+            "T": T,
+            "unit_amount": 0.0,
+            "unit_qty": 0,
+            "star_point": None,
+            "star_buy_price": None,
+            "take_profit_price": None,
+            "orders": [],
+        }
+
+    # ========================================
     # 2. 보유 정보 조회
     # ========================================
 

@@ -1,6 +1,7 @@
 # T값(매수 횟수)을 파일에 저장하고 불러오는 코드
 # 무한매수법에서 T값은 "지금까지 몇 번이나 매수했는가"를 나타내는 숫자입니다.
 # 프로그램이 종료되어도 T값을 잃지 않도록 JSON 파일에 보관합니다.
+import hashlib
 import json
 import os
 import tempfile
@@ -39,6 +40,7 @@ def load_state(symbol):
             "cycle_start_date": "",
             "effective_seed": 0.0,
             "net_invested": 0.0,
+            "net_invested_status": "valid",
             "last_processed_ordno": "",
             "additional_loc_odno": [],
             "orders_meta": {},
@@ -62,6 +64,7 @@ def load_state(symbol):
             "cycle_start_date": "",
             "effective_seed": 0.0,
             "net_invested": 0.0,
+            "net_invested_status": "unresolved",
             "last_processed_ordno": "",
             "_state_unavailable": "corrupt",
         }
@@ -74,6 +77,7 @@ def load_state(symbol):
             "cycle_start_date": "",
             "effective_seed": 0.0,
             "net_invested": 0.0,
+            "net_invested_status": "valid",
             "last_processed_ordno": "",
             "additional_loc_odno": [],
             "orders_meta": {},
@@ -94,6 +98,11 @@ def load_state(symbol):
     net_invested = float(state.get("net_invested", 0.0))
     # net_invested 필드가 없는 기존 상태(마이그레이션)는 이력 기반 백필을 위해 표시합니다.
     net_invested_missing = "net_invested" not in state
+    # net_invested_status: "valid"(신뢰 가능) | "unresolved"(신뢰 불가, 신규 주문 보류).
+    # 값이 없으면(unresolved) 신뢰할 수 없다고 보고 — SOXL net_invested=0.00 손상 사고 방지.
+    net_invested_status = state.get("net_invested_status", "")
+    if net_invested_status not in ("valid", "unresolved"):
+        net_invested_status = "unresolved"
     last_processed_ordno = state.get("last_processed_ordno", "")
     additional_loc_odno = state.get("additional_loc_odno", [])
     orders_meta = state.get("orders_meta", {})
@@ -111,6 +120,7 @@ def load_state(symbol):
         "cycle_start_date": cycle_start_date,
         "effective_seed": effective_seed,
         "net_invested": net_invested,
+        "net_invested_status": net_invested_status,
         "last_processed_ordno": last_processed_ordno,
         "additional_loc_odno": additional_loc_odno,
         "orders_meta": orders_meta,
@@ -159,6 +169,7 @@ def save_state(symbol, state_dict):
         "cycle_start_date": state_dict.get("cycle_start_date", ""),
         "effective_seed": float(state_dict.get("effective_seed", 0.0)),
         "net_invested": float(state_dict.get("net_invested", 0.0)),
+        "net_invested_status": state_dict.get("net_invested_status", "unresolved"),
         "last_processed_ordno": state_dict.get("last_processed_ordno", ""),
         "additional_loc_odno": state_dict.get("additional_loc_odno", []),
         "orders_meta": state_dict.get("orders_meta", {}),
@@ -192,6 +203,33 @@ def save_state(symbol, state_dict):
     mismatch = all_states[symbol].get("balance_mismatch")
     mismatch_flag = "YES" if mismatch else "NO"
     print(f"[상태] {symbol} 상태 저장 완료 → T={T}, effective_seed=${effective_seed:.2f}, last_updated={last_upd}, last_processed_ordno={last_ordno}, balance_mismatch={mismatch_flag}")
+
+
+def canonical_state_hash(state):
+    """save_state()가 저장하는 필드만으로 계산한 SHA-256 해시를 반환합니다.
+
+    상태 파일의 canonical 형태(저장 관점)에 대한 지문으로, 일회성 복구(fence/T/net_invested)
+    CAS 검증과 audit 출력에 사용합니다. 상태 저장 후 재계산하면 값이 달라짐을 보장합니다.
+    """
+    payload = {
+        "T": float(state.get("T", 0.0)),
+        "last_updated": state.get("last_updated", ""),
+        "cycle_start_date": state.get("cycle_start_date", ""),
+        "effective_seed": float(state.get("effective_seed", 0.0)),
+        "net_invested": float(state.get("net_invested", 0.0)),
+        "net_invested_status": state.get("net_invested_status", "unresolved"),
+        "last_processed_ordno": state.get("last_processed_ordno", ""),
+        "additional_loc_odno": state.get("additional_loc_odno", []),
+        "orders_meta": state.get("orders_meta", {}),
+        "balance_mismatch": state.get("balance_mismatch", {}),
+        "state_version": state.get("state_version", "v2"),
+        "close_prices": state.get("close_prices", []),
+        "reverse_mode": state.get("reverse_mode", {}),
+        "pending_order_intent": state.get("pending_order_intent"),
+        "pending_order_batch": state.get("pending_order_batch"),
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def register_order_meta_in_state(state, odno, meta):

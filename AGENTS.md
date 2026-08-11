@@ -143,6 +143,23 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
     `update_T_from_history`에서 `_compute_non_reverse_net_invested(cutoff_dt=last_updated)`로 1회 백필.
     cutoff는 `_apply`의 최근 윈도우와 상보적이어서 **이중 가산 없음**.
   - 리버스 주문은 `_compute_non_reverse_net_invested`에서 제외, reconcile이 델타 반영.
+- **net_invested 신뢰성(`net_invested_status`)** — SOXL `net_invested=0.00` 손상 사고 대응:
+  - 상태머신: `"valid"`(신뢰) | `"unresolved"`(신뢰 불가). 필드가 없으면 `unresolved`로 처리
+    (기존/마이그레이션 상태는 자동 `unresolved` → **TQQQ도 1회 audit 필요**).
+  - `unresolved` 중엔 `무한매수법_V4`가 **신규 전략 주문을 차단** (`strategy.py` 게이트, `seed>0`일 때만).
+    reconciliation(체결 반영)은 이전처럼 계속 실행됩니다.
+  - `valid` 자동 설정 지점: 신규 상태(파일 없음/종목 미등록), 사이클 종료·전량매도 리셋, `FORCE_T=0` 리셋,
+    `STATE_NET_INVESTED_REPAIR_ONLY` 복구 성공 시.
+  - 도구:
+    - `STATE_REVERSE_AUDIT_ONLY=true`: 브로커 주문이력 vs state `orders_meta` 대조 (read-only,
+      `state_hash` 출력, state 미저장).
+    - `STATE_REVERSE_RECONCILE_ONLY=true`: 기존 reconciliation으로 미반영 체결만 state에 반영·저장
+      (전략/주문 없음). `net_invested_status`는 승격하지 않음.
+    - `STATE_NET_INVESTED_REPAIR_ONLY=true`: canonical `state_hash` + 필드 fingerprint(CAS)가
+      일치할 때만 `net_invested`를 명시 값으로 복구하고 `valid` 전환. 미종결 리버스 주문/fence 있으면 거부.
+      `STATE_NET_INVESTED_REPAIR_SYMBOL`/`_TARGET`/`_EXPECT_HASH`/`_EXPECT_NET_INVESTED`/`_EXPECT_STATUS` 필요.
+  - `canonical_state_hash()` (`src/state.py`): `save_state()`가 기록하는 필드만 SHA-256 — 복구 CAS/audit용.
+    세 복구 모드(`STATE_REVERSE_AUDIT_ONLY`/`RECONCILE_ONLY`/`NET_INVESTED_REPAIR_ONLY`)는 **동시 설정 금지**.
 - **KIWOOM/LS/TOSS**: `BROKER_CONFIG`에 `account_no` 불필요 (AppKey/Secret만으로 API 호출 가능)
 - **주문 시각**: 모든 브로커에서 `get_kst_now()` 사용 (API 응답 시간 미사용)
 - **KIS ODNO 정규화**: 주문 접수 API는 leading zero 10자리(`0000052248`), 체결 조회는 trimmed(`52248`) 반환 → `kis/adapter.py`에서 `str(int(odno))`로 정규화 후 반환 (다른 브로커는 해당 없음)

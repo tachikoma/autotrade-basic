@@ -356,6 +356,7 @@ def test_strategy_seed_cap_blocks_when_net_invested_exceeds_seed(monkeypatch):
     state = {
         "T": 5.0,
         "net_invested": 56299.66,
+        "net_invested_status": "valid",
         "reverse_mode": {},
         "close_prices": [50.0],
     }
@@ -380,6 +381,7 @@ def test_strategy_seed_cap_allows_within_seed(monkeypatch):
     state = {
         "T": 5.0,
         "net_invested": 30000.0,
+        "net_invested_status": "valid",
         "reverse_mode": {},
         "close_prices": [50.0],
     }
