@@ -1150,6 +1150,10 @@ def _reverse_audit_only():
                     f"  odno={odno} side={meta.get('reverse_action')} day={meta.get('reverse_day')} "
                     f"submitted={meta.get('submitted_at', '')} session={meta.get('submitted_session', '')} "
                     f"| 브로커: qty={broker_qty} amt=${broker_amt:.2f} "
+                    f"remaining={settled.get('nccs_qty', '') if settled else ''} "
+                    f"status={settled.get('prcs_stat_name', '') if settled else ''} "
+                    f"cancel_qty={settled.get('cncl_qty', '') if settled else ''} "
+                    f"text1={settled.get('text1', '') if settled else ''} "
                     f"| state: qty={state_qty} amt=${state_amt:.2f} "
                     f"| delta_amt=${delta_amt:.2f} terminal={terminal}"
                 )
