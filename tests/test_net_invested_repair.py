@@ -8,6 +8,7 @@ reconciliation(0에서 매도금 차감 → clamp 0)으로 왜곡되어 시드 �
   - STATE_REVERSE_AUDIT_ONLY (read-only 감사)
   - STATE_REVERSE_RECONCILE_ONLY (체결만 반영, 주문 없음)
   - STATE_NET_INVESTED_REPAIR_ONLY (명시 값 CAS 복구)
+  - STATE_ASSUME_REVERSE_EXPIRY_ONLY (키움 모의 이전 세션 zero-fill 종결 가정)
 """
 import os
 import sys
