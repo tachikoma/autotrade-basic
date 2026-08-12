@@ -118,6 +118,16 @@ class TestStrategyGate:
         )
         assert "symbol" in result
 
+    def test_unresolved_양수_net_invested는_기존_주문을_허용(self):
+        """기존 상태의 양수 순투입값은 status 누락만으로 차단하지 않습니다."""
+        state = _make_state(net_invested=21660.09, net_invested_status="unresolved")
+        result = strategy.무한매수법_V4(
+            _FakeBroker(), symbol="TQQQ", exchange_code="NAS", splits=40,
+            symbol_type="TQQQ", seed=50000.0, T=5.0, state=state,
+        )
+        assert "symbol" in result
+        assert result["remaining_seed"] == 28339.91
+
 
 class TestCanonicalStateHash:
     def test_해시_안정성(self):

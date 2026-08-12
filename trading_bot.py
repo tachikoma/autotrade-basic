@@ -226,9 +226,13 @@ def run_one_symbol(broker: Broker, symbol_config):
             f"{state['_state_unavailable']}"
         )
 
-    if state.get("net_invested_status", "unresolved") != "valid" and TRADE_MODE == "LIVE":
+    unresolved_zero_invested = (
+        state.get("net_invested_status", "unresolved") != "valid"
+        and float(state.get("net_invested", 0.0) or 0.0) <= 0
+    )
+    if unresolved_zero_invested and TRADE_MODE == "LIVE":
         notify(
-            f"[상태] {symbol} net_invested 미확정(unresolved) → 신규 전략 주문을 보류합니다.\n"
+            f"[상태] {symbol} net_invested 미확정(unresolved) 및 0 이하 → 신규 전략 주문을 보류합니다.\n"
             "STATE_REVERSE_AUDIT_ONLY/reconcile로 상태를 확인하세요."
         )
 

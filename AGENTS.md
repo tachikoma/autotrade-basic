@@ -146,8 +146,9 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 - **net_invested 신뢰성(`net_invested_status`)** — SOXL `net_invested=0.00` 손상 사고 대응:
   - 상태머신: `"valid"`(신뢰) | `"unresolved"`(신뢰 불가). 필드가 없으면 `unresolved`로 처리
     (기존/마이그레이션 상태는 자동 `unresolved` → **TQQQ도 1회 audit 필요**).
-  - `unresolved` 중엔 `무한매수법_V4`가 **신규 전략 주문을 차단** (`strategy.py` 게이트, `seed>0`일 때만).
-    reconciliation(체결 반영)은 이전처럼 계속 실행됩니다.
+  - `unresolved`이고 `net_invested<=0`이면 `무한매수법_V4`가 **신규 전략 주문을 차단**합니다
+    (`strategy.py` 게이트, `seed>0`일 때만). 기존 상태에 양수 `net_invested`가 있으면 status 누락만으로
+    기존 운용을 차단하지 않습니다. reconciliation(체결 반영)은 이전처럼 계속 실행됩니다.
   - `valid` 자동 설정 지점: 신규 상태(파일 없음/종목 미등록), 사이클 종료·전량매도 리셋, `FORCE_T=0` 리셋,
     `STATE_NET_INVESTED_REPAIR_ONLY` 복구 성공 시.
   - 도구:

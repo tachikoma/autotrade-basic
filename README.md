@@ -160,7 +160,7 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 | `cycle_start_date` | str | 현재 사이클 시작일 (YYYY-MM-DD) |
 | `effective_seed` | float | 복리 재투자 적용 시드 (REINVEST 활성 시) |
 | `net_invested` | float | 순투입 금액 (Σ 매수체결금액 − Σ 매도체결금액, USD). 시드 캡 기준 |
-| `net_invested_status` | str | `valid` 또는 `unresolved`. `unresolved`이면 seed>0 신규 전략 주문을 보류 |
+| `net_invested_status` | str | `valid` 또는 `unresolved`. `unresolved`이고 `net_invested<=0`일 때 seed>0 신규 전략 주문을 보류 |
 | `orders_meta` | dict | 주문별 메타 (t_target, is_additional, 부분체결 추적) |
 | `last_processed_ordno` | str | 마지막 처리 주문번호 |
 | `balance_mismatch` | dict | 잔고 불일치 진단 정보 |
@@ -237,7 +237,7 @@ ADDITIONAL_LOC_LEVELS=3         # 모든 종목 공통 기본값 (종목별 설�
 - **다중 종목 중심**: `SYMBOLS`에 `TQQQ:NAS,SOXL:AMS` 형태로 종목을 지정합니다. 미설정 시 기본값은 `TQQQ:NAS,SOXL:AMS`입니다.
 - **캐시 상태 진단**: GitHub Actions에서 `.state.json`을 직접 확인할 수 없을 때 해당 Environment의 `STATE_DIAGNOSTIC_ONLY=true`로 1회 실행하면 T, 리버스모드 진행일, 누적 매도대금, 마지막 처리 주문번호만 출력합니다. 확인 후 변수를 즉시 `false` 또는 삭제하세요.
 - **캐시 상태 복구**: `STATE_REPAIR_ONLY=true`는 API/전략/주문 없이 지정한 fingerprint가 일치할 때만 실행합니다. `STATE_REPAIR_SYMBOL`, `STATE_REPAIR_EXPECT_T`, `STATE_REPAIR_EXPECT_DAY_COUNT`, `STATE_REPAIR_EXPECT_PROCEEDS`, `STATE_REPAIR_EXPECT_LAST_UPDATED`, `STATE_REPAIR_EXPECT_LAST_ORDNO`, `STATE_REPAIR_EXPECT_REVERSE_IDS`, `STATE_REPAIR_EXPECT_REVERSE_SUBMITTED_AT`를 모두 설정하고, 운영 브랜치의 정확한 캐시에서 1회 실행한 뒤 즉시 모든 복구 변수를 삭제하세요.
-- **순투입 신뢰성 복구**: `net_invested_status=unresolved`인 동안 seed>0 신규 전략 주문은 차단됩니다. `STATE_REVERSE_AUDIT_ONLY`로 주문·체결 상태를 먼저 확인하고, `STATE_REVERSE_RECONCILE_ONLY`로 미반영 체결을 저장한 뒤, `STATE_NET_INVESTED_REPAIR_ONLY`에서 canonical state hash와 기존 값 fingerprint를 검증해 `net_invested`를 복구합니다. 세부 변수(`SYMBOL`, `TARGET`, `EXPECT_HASH`, `EXPECT_NET_INVESTED`, `EXPECT_STATUS`)는 1회 실행 직후 삭제하세요.
+- **순투입 신뢰성 복구**: `net_invested_status=unresolved`이고 `net_invested<=0`인 동안 seed>0 신규 전략 주문을 차단합니다. 기존 상태에 양수 `net_invested`가 있으면 status 누락만으로 기존 주문을 중단하지 않습니다. `STATE_REVERSE_AUDIT_ONLY`로 주문·체결 상태를 먼저 확인하고, `STATE_REVERSE_RECONCILE_ONLY`로 미반영 체결을 저장한 뒤, `STATE_NET_INVESTED_REPAIR_ONLY`에서 canonical state hash와 기존 값 fingerprint를 검증해 `net_invested`를 복구합니다. 세부 변수(`SYMBOL`, `TARGET`, `EXPECT_HASH`, `EXPECT_NET_INVESTED`, `EXPECT_STATUS`)는 1회 실행 직후 삭제하세요.
 - **키움 모의 만료 가정**: 모의 API가 이전 세션 zero-fill LIMIT 주문을 `접수` 상태로 유지할 때만 `STATE_ASSUME_REVERSE_EXPIRY_ONLY`를 사용합니다. `STATE_ASSUME_REVERSE_EXPIRY_SYMBOL`, `_ORDER`, `_EXPECT_HASH`가 필요하며, 주문 메타에 `terminal_assumed=true`와 사유/시각을 기록합니다. **실전 및 다른 브로커에서는 거부**되며, 실전은 API의 취소·만료·체결 상태를 확인할 때까지 주문을 보류합니다.
 - **주문 fence 복구**: 불확실 주문(네트워크 오류 등)으로 남은 주문 fence는 **다음 RUN에서 자동 복구**됩니다. 주문이력/잔고 reconciliation이 정상 통과하고 fence가 이전 미국(ET) 세션 기록이면 이력이 정착된 것으로 보고 fence를 해제하고 진행합니다 (해당 종목만, 다른 종목은 영향 없음). 자동 복구가 안 되는 경우 `STATE_CLEAR_FENCE_ONLY=true` + `STATE_CLEAR_FENCE_SYMBOL` + `STATE_CLEAR_FENCE_EXPECT_T` + `STATE_CLEAR_FENCE_EXPECT_LAST_UPDATED` + `STATE_CLEAR_FENCE_EXPECT_INTENT` + `STATE_CLEAR_FENCE_EXPECT_BATCH`로 1회 초기화 후 변수를 즉시 삭제하세요. `EXPECT_INTENT`/`EXPECT_BATCH`는 상태에 남은 fence 값의 정규화 JSON이며, "fence 없음"이면 빈 값입니다 (env var 존재만 필수).
 - **종목별 설정**: `{SYMBOL}_SPLITS`, `{SYMBOL}_SYMBOL_TYPE`, `{SYMBOL}_SEED`, `{SYMBOL}_ADDITIONAL_LOC_LEVELS`를 사용합니다.
