@@ -159,9 +159,12 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
     - `STATE_NET_INVESTED_REPAIR_ONLY=true`: canonical `state_hash` + 필드 fingerprint(CAS)가
       일치할 때만 `net_invested`를 명시 값으로 복구하고 `valid` 전환. 미종결 리버스 주문/fence 있으면 거부.
       `STATE_NET_INVESTED_REPAIR_SYMBOL`/`_TARGET`/`_EXPECT_HASH`/`_EXPECT_NET_INVESTED`/`_EXPECT_STATUS` 필요.
-    - `STATE_ASSUME_REVERSE_EXPIRY_ONLY=true`: **키움 모의 전용**. 이전 미국 세션의 zero-fill 리버스 주문을
-      `terminal_assumed=true`로 1회성 종결 처리한 뒤 reconcile/repair를 진행할 때 사용합니다.
-      실전/다른 브로커에서는 거부되며 `STATE_ASSUME_REVERSE_EXPIRY_SYMBOL`/`_ORDER`/`_EXPECT_HASH` 필요.
+    - `STATE_ASSUME_REVERSE_EXPIRY_ONLY=true`: **키움 모의 등 수동 강제 처리용**. 이전 미국 세션의
+      zero-fill 리버스 주문을 `terminal_assumed=true`로 1회성 종결 처리한 뒤 reconcile/repair를
+      진행할 때 사용합니다. `BROKER_MODE=demo`에서는 reconcile이 `_auto_assume_reverse_expiry()`
+      (`src/state.py`)로 **자동** 처리하므로, 이 도구는 실전(real)/비데모, 부분체결·이력 누락 등
+      자동 처리 예외 케이스에만 필요합니다. 실전/다른 브로커에서는 거부되며
+      `STATE_ASSUME_REVERSE_EXPIRY_SYMBOL`/`_ORDER`/`_EXPECT_HASH` 필요.
   - `canonical_state_hash()` (`src/state.py`): `save_state()`가 기록하는 필드만 SHA-256 — 복구 CAS/audit용.
     네 복구 모드(`STATE_REVERSE_AUDIT_ONLY`/`RECONCILE_ONLY`/`NET_INVESTED_REPAIR_ONLY`/`ASSUME_REVERSE_EXPIRY_ONLY`)는 **동시 설정 금지**.
 - **KIWOOM/LS/TOSS**: `BROKER_CONFIG`에 `account_no` 불필요 (AppKey/Secret만으로 API 호출 가능)
@@ -195,6 +198,12 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
     MOC→LIMIT 매도가 이력에 `ord_dt=20260805`(ET영업일)로 기록 → 날짜 하루 차이로 "리버스 주문 이력 누락" 오판 →
     신규 주문 영구 차단 + 리버스 매도가 일반 쿼터매도(×0.75)로 오분류되어 T=15 오반영(정상 ×0.9 → 18).
     복구: `STATE_REPAIR_TARGET_T=20`으로 T만 보정 후 다음 RUN의 reconciliation이 재계산.
+  - **데모 zero-fill 리버스 주문 자동 만료** (`state.py` `_auto_assume_reverse_expiry`):
+    `BROKER_MODE=demo`에서는 이전 미국 세션의 zero-fill(이력 `ft_ccld_qty`=0 && `processed_filled_qty`=0
+    && `processed_filled_amount`=0) 리버스 주문(매수/매도 모두)이 `reconcile_reverse_fills`에서
+    자동으로 `terminal=true, terminal_assumed=true` 처리되어 "전일 리버스 주문 미종결 → 신규 주문 보류"
+    동결이 발생하지 않습니다. 실전(real) 또는 부분체결·이력 누락 주문은 기존대로 보류 유지.
+    늦은 체결은 odno 단위 `processed_filled_qty` 델타로 다음 RUN에 그대로 반영됩니다(상태 소실 없음).
 - **ORDER_HISTORY_VERBOSE=true**: LIVE 모드에서도 `[주문이력 요약]` 상세 출력 (DRY는 항상 출력). KIS/KIWOOM/LS/TOSS 공통
 - **텔레그램 재시도**: `send_telegram()`은 타임아웃/연결 오류/서버 5xx 시 최대 3회 재시도(1초 간격). 4xx(설정 오류 등)는 재시도 없이 즉시 실패
 - **T 보정 환경변수**:

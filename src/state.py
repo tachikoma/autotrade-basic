@@ -302,6 +302,44 @@ def _is_terminal_reverse_order(order):
         return False
 
 
+def _auto_assume_reverse_expiry(meta, order):
+    """데모 환경에서 이전 세션의 zero-fill 리버스 주문을 만료로 가정해 자동 종결합니다.
+
+    데모(특히 키움 모의)는 일중 주문(LOC/LOO/MOC→LIMIT 자동 변환)이 마감 후
+    만료돼도 상태를 "미체결"로 남겨 _is_terminal_reverse_order()가 영구 False가
+    됩니다. 이 상태가 reconcile의 "전일 리버스 주문 미종결 → 신규 주문 보류"
+    차단과 만나면 리버스모드가 무기한 동결됩니다.
+
+    이를 막기 위해, 이전 미국 세션에서 체결 기회가 지나고 체결량/체결금액이
+    0인 주문(BROKER_MODE=demo 한정)은 terminal_assumed=True로 자동 종결 처리합니다.
+    늦은 체결은 reconcile의 odno 단위 processed_filled_qty 델타가 다음 RUN에
+    그대로 반영하므로 상태가 소실되지 않습니다. 매수/매도 모두 대상입니다.
+    """
+    try:
+        from config import BROKER_MODE
+    except Exception:
+        BROKER_MODE = ""
+    if BROKER_MODE != "demo":
+        return False
+    if meta.get("terminal"):
+        return False
+    try:
+        history_filled = int(float(order.get("ft_ccld_qty", "0") or 0))
+    except (TypeError, ValueError):
+        history_filled = 0
+    if history_filled != 0:
+        return False
+    if int(meta.get("processed_filled_qty", 0) or 0) != 0:
+        return False
+    if float(meta.get("processed_filled_amount", 0.0) or 0.0) != 0.0:
+        return False
+    meta["terminal"] = True
+    meta["terminal_assumed"] = True
+    meta["terminal_assumed_at"] = datetime.now(ZoneInfo("UTC")).isoformat()
+    meta["terminal_assumption_reason"] = "auto_expired_demo_day_order_after_session"
+    return True
+
+
 def reconcile_reverse_fills(state, order_history):
     """리버스모드 주문의 실제 누적 체결만 상태에 반영합니다.
 
@@ -358,9 +396,18 @@ def reconcile_reverse_fills(state, order_history):
             and meta.get("submitted_session", "") < today_session
             and not _is_terminal_reverse_order(order)
         ):
-            reverse_mode["reconciliation_error"] = "reverse_order_not_terminal"
-            reverse_mode["reconciliation_only"] = True
-            print(f"[경고] 전일 리버스 주문이 종결되지 않음: odno={odno} → 신규 주문을 보류합니다.")
+            if meta.get("terminal"):
+                # 이미 종결(자동/수동 만료 가정 포함) 처리된 주문은 재차단하지 않습니다.
+                pass
+            elif _auto_assume_reverse_expiry(meta, order):
+                print(
+                    f"[경고] 이전 세션 미체결 리버스 주문을 만료로 가정합니다: "
+                    f"odno={odno} → 자동 종결 처리 (데모 일중 주문)"
+                )
+            else:
+                reverse_mode["reconciliation_error"] = "reverse_order_not_terminal"
+                reverse_mode["reconciliation_only"] = True
+                print(f"[경고] 전일 리버스 주문이 종결되지 않음: odno={odno} → 신규 주문을 보류합니다.")
         try:
             filled_qty = max(0, int(float(order.get("ft_ccld_qty", "0"))))
             processed_qty = max(0, int(meta.get("processed_filled_qty", 0)))

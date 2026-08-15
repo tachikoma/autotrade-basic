@@ -1,5 +1,7 @@
 from copy import deepcopy
+from datetime import datetime
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 from state import reconcile_reverse_fills, update_T_from_history
 from strategy import execute_reverse_mode
@@ -486,3 +488,266 @@ def test_generic_path_skips_reverse_moc_fill_with_off_by_one_ord_dt():
     assert state["reverse_mode"]["day_count"] == 1
     assert state["reverse_mode"].get("reconciliation_error") is None
     assert state["reverse_mode"].get("reconciliation_only") is None
+
+
+# --- 이전 세션 zero-fill 리버스 주문 자동 만료 가정 (데모 전용) ---
+
+
+def test_auto_expire_prev_session_zero_fill_buy_demo(monkeypatch):
+    """데모: 이전 세션 zero-fill 리버스 매수 → 자동 만료 가정, 차단 없음."""
+    monkeypatch.setattr("config.BROKER_MODE", "demo")
+    state = {
+        "T": 12.0,
+        "reverse_mode": {"active": True, "cycle_id": "C8", "day_count": 5},
+        "orders_meta": {
+            "RBUY1": {
+                "side": "BUY",
+                "total_qty": 40,
+                "processed_filled_qty": 0,
+                "reverse_action": "buy",
+                "reverse_day": 2,
+                "reverse_t_target": 0.5,
+                "cycle_id": "C8",
+                "submitted_at": "20260810041612",
+                "submitted_session": "2026-08-10",
+            }
+        },
+    }
+    history = [{
+        "odno": "RBUY1",
+        "ord_dt": "20260810",
+        "ord_datetime_utc": "2026-08-09T19:16:12+00:00",
+        "sll_buy_dvsn_cd_name": "매수",
+        "ft_ccld_qty": "0",
+        "ft_ccld_amt3": "0",
+        "nccs_qty": "40",
+        "prcs_stat_name": "미체결",
+    }]
+
+    reconcile_reverse_fills(state, history)
+
+    meta = state["orders_meta"]["RBUY1"]
+    assert meta["terminal"] is True
+    assert meta["terminal_assumed"] is True
+    assert meta["terminal_assumption_reason"] == "auto_expired_demo_day_order_after_session"
+    assert state["reverse_mode"].get("reconciliation_error") is None
+    assert state["reverse_mode"].get("reconciliation_only") is None
+    assert state["T"] == 12.0
+
+
+def test_auto_expire_prev_session_zero_fill_sell_demo(monkeypatch):
+    """데모: 이전 세션 zero-fill 리버스 매도 → 자동 만료 가정, 차단 없음."""
+    monkeypatch.setattr("config.BROKER_MODE", "demo")
+    state = {
+        "T": 12.0,
+        "reverse_mode": {"active": True, "cycle_id": "C9", "day_count": 1},
+        "orders_meta": {
+            "RSELL1": {
+                "side": "SELL",
+                "total_qty": 32,
+                "processed_filled_qty": 0,
+                "reverse_action": "sell",
+                "reverse_day": 1,
+                "reverse_base_t": 12.0,
+                "reverse_t_factor": 0.9,
+                "cycle_id": "C9",
+                "submitted_at": "20260810041612",
+                "submitted_session": "2026-08-10",
+            }
+        },
+    }
+    history = [{
+        "odno": "RSELL1",
+        "ord_dt": "20260810",
+        "ord_datetime_utc": "2026-08-09T19:16:12+00:00",
+        "sll_buy_dvsn_cd_name": "매도",
+        "ft_ccld_qty": "0",
+        "ft_ccld_amt3": "0",
+        "nccs_qty": "32",
+        "prcs_stat_name": "미체결",
+    }]
+
+    reconcile_reverse_fills(state, history)
+
+    meta = state["orders_meta"]["RSELL1"]
+    assert meta["terminal"] is True
+    assert meta["terminal_assumed"] is True
+    assert state["reverse_mode"].get("reconciliation_error") is None
+    assert state["reverse_mode"].get("reconciliation_only") is None
+    assert state["T"] == 12.0
+
+
+def test_auto_expire_not_in_real_mode(monkeypatch):
+    """실전: 같은 zero-fill 주문이라도 자동 만료하지 않고 차단 유지."""
+    monkeypatch.setattr("config.BROKER_MODE", "real")
+    state = {
+        "T": 12.0,
+        "reverse_mode": {"active": True, "cycle_id": "C10", "day_count": 5},
+        "orders_meta": {
+            "RBUY1": {
+                "side": "BUY",
+                "total_qty": 40,
+                "processed_filled_qty": 0,
+                "reverse_action": "buy",
+                "reverse_day": 2,
+                "reverse_t_target": 0.5,
+                "cycle_id": "C10",
+                "submitted_at": "20260810041612",
+                "submitted_session": "2026-08-10",
+            }
+        },
+    }
+    history = [{
+        "odno": "RBUY1",
+        "ord_dt": "20260810",
+        "ord_datetime_utc": "2026-08-09T19:16:12+00:00",
+        "sll_buy_dvsn_cd_name": "매수",
+        "ft_ccld_qty": "0",
+        "ft_ccld_amt3": "0",
+        "nccs_qty": "40",
+        "prcs_stat_name": "미체결",
+    }]
+
+    reconcile_reverse_fills(state, history)
+
+    meta = state["orders_meta"]["RBUY1"]
+    assert meta.get("terminal") is not True
+    assert state["reverse_mode"]["reconciliation_error"] == "reverse_order_not_terminal"
+    assert state["reverse_mode"]["reconciliation_only"] is True
+
+
+def test_auto_expire_not_for_today_session(monkeypatch):
+    """데모: 오늘 세션의 미체결 주문은 만료 가정하지 않음 (다음 RUN에서 판정)."""
+    monkeypatch.setattr("config.BROKER_MODE", "demo")
+    today_session = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    today_compact = today_session.replace("-", "")
+    state = {
+        "T": 12.0,
+        "reverse_mode": {"active": True, "cycle_id": "C11", "day_count": 5},
+        "orders_meta": {
+            "RBUY2": {
+                "side": "BUY",
+                "total_qty": 40,
+                "processed_filled_qty": 0,
+                "reverse_action": "buy",
+                "reverse_day": 2,
+                "reverse_t_target": 0.5,
+                "cycle_id": "C11",
+                "submitted_at": today_compact + "041612",
+                "submitted_session": today_session,
+            }
+        },
+    }
+    history = [{
+        "odno": "RBUY2",
+        "ord_dt": today_compact,
+        "ord_datetime_utc": today_compact + "T19:16:12+00:00",
+        "sll_buy_dvsn_cd_name": "매수",
+        "ft_ccld_qty": "0",
+        "ft_ccld_amt3": "0",
+        "nccs_qty": "40",
+        "prcs_stat_name": "미체결",
+    }]
+
+    reconcile_reverse_fills(state, history)
+
+    meta = state["orders_meta"]["RBUY2"]
+    assert meta.get("terminal") is not True
+    assert state["reverse_mode"].get("reconciliation_error") is None
+    assert state["reverse_mode"].get("reconciliation_only") is None
+    assert state["T"] == 12.0
+
+
+def test_auto_expire_not_for_partial_fill(monkeypatch):
+    """데모: 부분체결된 주문은 만료 가정하지 않고 차단 유지 + 체결분은 반영."""
+    monkeypatch.setattr("config.BROKER_MODE", "demo")
+    state = {
+        "T": 12.0,
+        "reverse_mode": {"active": True, "cycle_id": "C12", "day_count": 5},
+        "orders_meta": {
+            "RBUY3": {
+                "side": "BUY",
+                "total_qty": 40,
+                "processed_filled_qty": 0,
+                "reverse_action": "buy",
+                "reverse_day": 2,
+                "reverse_t_target": 0.5,
+                "cycle_id": "C12",
+                "submitted_at": "20260810041612",
+                "submitted_session": "2026-08-10",
+            }
+        },
+    }
+    history = [{
+        "odno": "RBUY3",
+        "ord_dt": "20260810",
+        "ord_datetime_utc": "2026-08-09T19:16:12+00:00",
+        "sll_buy_dvsn_cd_name": "매수",
+        "ft_ccld_qty": "16",
+        "ft_ccld_amt3": "792.00",
+        "nccs_qty": "24",
+        "prcs_stat_name": "부분체결",
+    }]
+
+    reconcile_reverse_fills(state, history)
+
+    meta = state["orders_meta"]["RBUY3"]
+    assert meta.get("terminal") is not True
+    assert state["reverse_mode"]["reconciliation_error"] == "reverse_order_not_terminal"
+    assert state["reverse_mode"]["reconciliation_only"] is True
+    assert state["T"] == 12.2
+
+
+def test_auto_expire_late_fill_still_reflected(monkeypatch):
+    """자동 만료 가정 후 늦은 체결이 들어오면 다음 RUN에 델타 그대로 반영."""
+    monkeypatch.setattr("config.BROKER_MODE", "demo")
+    state = {
+        "T": 12.0,
+        "reverse_mode": {"active": True, "cycle_id": "C13", "day_count": 5},
+        "orders_meta": {
+            "RBUY4": {
+                "side": "BUY",
+                "total_qty": 40,
+                "processed_filled_qty": 0,
+                "reverse_action": "buy",
+                "reverse_day": 2,
+                "reverse_t_target": 0.5,
+                "cycle_id": "C13",
+                "submitted_at": "20260810041612",
+                "submitted_session": "2026-08-10",
+            }
+        },
+    }
+    zero_history = [{
+        "odno": "RBUY4",
+        "ord_dt": "20260810",
+        "ord_datetime_utc": "2026-08-09T19:16:12+00:00",
+        "sll_buy_dvsn_cd_name": "매수",
+        "ft_ccld_qty": "0",
+        "ft_ccld_amt3": "0",
+        "nccs_qty": "40",
+        "prcs_stat_name": "미체결",
+    }]
+
+    reconcile_reverse_fills(state, zero_history)
+
+    meta = state["orders_meta"]["RBUY4"]
+    assert meta["terminal"] is True
+    assert meta["terminal_assumed"] is True
+
+    late_history = [{
+        "odno": "RBUY4",
+        "ord_dt": "20260810",
+        "ord_datetime_utc": "2026-08-09T19:16:12+00:00",
+        "sll_buy_dvsn_cd_name": "매수",
+        "ft_ccld_qty": "16",
+        "ft_ccld_amt3": "792.00",
+        "nccs_qty": "24",
+        "prcs_stat_name": "부분체결",
+    }]
+
+    reconcile_reverse_fills(state, late_history)
+
+    assert state["T"] == 12.2
+    assert meta["processed_filled_qty"] == 16
+    assert meta["terminal"] is True
