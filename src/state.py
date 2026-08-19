@@ -498,6 +498,45 @@ def reconcile_reverse_fills(state, order_history):
         elif action == "buy":
             print(f"  → 리버스 매수 체결 반영: odno={odno}, ({filled_qty}/{total_qty})")
 
+    # 리버스 주문 체결 처리 후 last_updated 갱신
+    # _apply_recent_history_dt는 리버스 주문을 필터링하므로,
+    # 리버스만 처리된 상태에서 last_updated가 진하지 않으면 매 RUN 경고가 반복됩니다.
+    if events:
+        sorted_events = sorted(events, key=lambda item: (item[0], item[1]))
+        latest_ord_dt = sorted_events[-1][0]
+        latest_odno = sorted_events[-1][1]
+        if latest_ord_dt:
+            last_updated_str = state.get("last_updated", "")
+            last_updated_dt = None
+            if last_updated_str:
+                try:
+                    last_updated_dt = datetime.fromisoformat(last_updated_str)
+                    if last_updated_dt.tzinfo is None:
+                        last_updated_dt = last_updated_dt.replace(tzinfo=ZoneInfo("UTC"))
+                    else:
+                        last_updated_dt = last_updated_dt.astimezone(ZoneInfo("UTC"))
+                except Exception:
+                    pass
+            try:
+                latest_dt = datetime.fromisoformat(latest_ord_dt)
+                if latest_dt.tzinfo is None:
+                    latest_dt = latest_dt.replace(tzinfo=ZoneInfo("UTC"))
+                else:
+                    latest_dt = latest_dt.astimezone(ZoneInfo("UTC"))
+                if last_updated_dt is None or latest_dt > last_updated_dt:
+                    state["last_updated"] = latest_ord_dt
+                    state["last_processed_ordno"] = latest_odno
+                elif latest_dt == last_updated_dt and latest_odno:
+                    prev_ordno = state.get("last_processed_ordno", "")
+                    try:
+                        updated = int(latest_odno) > int(prev_ordno or "0")
+                    except (ValueError, TypeError):
+                        updated = latest_odno > (prev_ordno or "")
+                    if updated:
+                        state["last_processed_ordno"] = latest_odno
+            except Exception:
+                pass
+
     if confirmed_sell_days:
         reverse_mode["active"] = True
         reverse_mode["day_count"] = max(

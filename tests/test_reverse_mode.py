@@ -751,3 +751,82 @@ def test_auto_expire_late_fill_still_reflected(monkeypatch):
     assert state["T"] == 12.2
     assert meta["processed_filled_qty"] == 16
     assert meta["terminal"] is True
+
+
+# --- last_updated 갱신 테스트 ---
+
+
+def test_reconcile_advances_last_updated_with_reverse_fill():
+    """리버스 체결 반영 후 last_updated가 갱신되어야 합니다."""
+    state = {
+        "T": 20.0,
+        "last_updated": "2026-08-04T19:16:50+00:00",
+        "last_processed_ordno": "000004615",
+        "reverse_mode": {"active": True, "day_count": 0, "cycle_id": "CL1"},
+        "orders_meta": {
+            "RSELL_L1": {
+                "side": "SELL",
+                "total_qty": 32,
+                "processed_filled_qty": 0,
+                "reverse_action": "sell",
+                "reverse_day": 1,
+                "reverse_base_t": 20.0,
+                "reverse_t_factor": 0.9,
+                "cycle_id": "CL1",
+                "submitted_at": "20260810041650",
+            }
+        },
+    }
+    history = [{
+        "odno": "RSELL_L1",
+        "ord_dt": "20260809",
+        "ord_tmd": "041650",
+        "ord_datetime_utc": "2026-08-09T19:16:50+00:00",
+        "ft_ccld_qty": "32",
+        "ft_ccld_amt3": "4376.64",
+        "nccs_qty": "0",
+        "prcs_stat_name": "체결",
+    }]
+
+    reconcile_reverse_fills(state, history)
+
+    assert state["last_updated"] == "2026-08-09T19:16:50+00:00"
+    assert state["last_processed_ordno"] == "RSELL_L1"
+
+
+def test_reconcile_does_not_regress_last_updated():
+    """리버스 체결이 last_updated보다 과거이면 last_updated를 되돌리지 않아야 합니다."""
+    state = {
+        "T": 20.0,
+        "last_updated": "2026-08-15T19:00:00+00:00",
+        "last_processed_ordno": "000009999",
+        "reverse_mode": {"active": True, "day_count": 0, "cycle_id": "CL2"},
+        "orders_meta": {
+            "RSELL_L2": {
+                "side": "SELL",
+                "total_qty": 32,
+                "processed_filled_qty": 0,
+                "reverse_action": "sell",
+                "reverse_day": 1,
+                "reverse_base_t": 20.0,
+                "reverse_t_factor": 0.9,
+                "cycle_id": "CL2",
+                "submitted_at": "20260810041650",
+            }
+        },
+    }
+    history = [{
+        "odno": "RSELL_L2",
+        "ord_dt": "20260809",
+        "ord_tmd": "041650",
+        "ord_datetime_utc": "2026-08-09T19:16:50+00:00",
+        "ft_ccld_qty": "32",
+        "ft_ccld_amt3": "4376.64",
+        "nccs_qty": "0",
+        "prcs_stat_name": "체결",
+    }]
+
+    reconcile_reverse_fills(state, history)
+
+    assert state["last_updated"] == "2026-08-15T19:00:00+00:00"
+    assert state["last_processed_ordno"] == "000009999"
