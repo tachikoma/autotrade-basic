@@ -830,3 +830,79 @@ def test_reconcile_does_not_regress_last_updated():
 
     assert state["last_updated"] == "2026-08-15T19:00:00+00:00"
     assert state["last_processed_ordno"] == "000009999"
+
+
+# --- 리버스모드 소진 기준 테스트 ---
+
+
+def test_reverse_exhaustion_moc_sell_when_quarter_buy_impossible(monkeypatch):
+    """소진 시 쿼터매수 불가 → LOC 매도 대신 MOC 매도만 수행.
+
+    리버스모드 소진 기준: 쿼터매수(잔금의 1/4)로 1개 매수가 불가능해지는 시점.
+    이 경우 매수 시도 없이 MOC 매도만 시행합니다.
+    """
+    monkeypatch.setattr("strategy.get_finnhub_ma5", lambda symbol: None)
+    state = {
+        "T": 20.0,
+        "reverse_mode": {
+            "day_count": 1,
+            "cumulative_sell_proceeds": 0.0,
+        },
+        "close_prices": [100.0],
+    }
+
+    # orderable_cash=0 → 쿼터매수 불가 (buy_qty = 0)
+    result = execute_reverse_mode(
+        broker=None,
+        symbol="SOXL",
+        exchange_code="NYS",
+        splits=20,
+        symbol_type="SOXL",
+        position_qty=325,
+        avg_price=192.149,
+        orderable_cash=0.0,
+        last_price=118.0,
+        state=state,
+    )
+
+    assert len(result["orders"]) == 1, "소진 시 매도 주문 1건만 있어야 합니다"
+    assert result["orders"][0]["side"] == "SELL"
+    assert result["orders"][0]["order_type"] == "MOC", "소진 시 LOC 대신 MOC 매도여야 합니다"
+    assert "소진" in result["orders"][0]["comment"]
+
+
+def test_reverse_non_exhaustion_loc_sell_and_loc_buy(monkeypatch):
+    """비소진 시 쿼터매수 가능 → LOC 매도 + LOC 매수 수행.
+
+    쿼터매수(잔금의 1/4)로 1개 매수가 가능하면 별지점 아래에서 매수를 지속합니다.
+    """
+    monkeypatch.setattr("strategy.get_finnhub_ma5", lambda symbol: None)
+    state = {
+        "T": 20.0,
+        "reverse_mode": {
+            "day_count": 1,
+            "cumulative_sell_proceeds": 0.0,
+        },
+        "close_prices": [100.0],
+    }
+
+    # orderable_cash=10000 → 쿼터매수 가능 (buy_amount=2500, star≈100 → buy_qty≥1)
+    result = execute_reverse_mode(
+        broker=None,
+        symbol="SOXL",
+        exchange_code="NYS",
+        splits=20,
+        symbol_type="SOXL",
+        position_qty=325,
+        avg_price=192.149,
+        orderable_cash=10000.0,
+        last_price=118.0,
+        state=state,
+    )
+
+    assert len(result["orders"]) == 2, "비소진 시 매도+매수 2건이 있어야 합니다"
+    sell_order = next(o for o in result["orders"] if o["side"] == "SELL")
+    buy_order = next(o for o in result["orders"] if o["side"] == "BUY")
+    assert sell_order["order_type"] == "LOC", "비소진 시 LOC 매도여야 합니다"
+    assert buy_order["order_type"] == "LOC", "비소진 시 LOC 매수여야 합니다"
+    assert "쿼터매수" in buy_order["comment"]

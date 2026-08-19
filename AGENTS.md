@@ -216,7 +216,8 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 - **리버스모드** (`src/strategy.py execute_reverse_mode()`):
   - 발동: `T > splits - 1` + position > 0 (20분할 T>19, 40분할 T>39 — 원본 규칙: 마지막 1회 매수도 불가능한 상태)
   - 1일차: MOC 매도 (보유량 1/10(20분할) or 1/20(40분할)) → T × 0.9/0.95 (MOC 가격은 `adjust_price_to_tick()`으로 호가 단위 보정 후 전달)
-  - 2일차+: LOC 매도 @5일MA + 실제 주문가능금액 기준 쿼터매수 @별지점-0.01
+  - 2일차+ (비소진): LOC 매도 @5일MA + 실제 주문가능금액 기준 쿼터매수 @별지점-0.01
+  - 2일차+ (소진): 쿼터매수(잔금의 1/4)로 1개 매수가 불가능하면 매수 시도 없이 MOC 매도만 수행
   - 리버스모드 날짜는 실행당 1회만 증가하며, DRY 실행으로 저장 상태를 진행시키지 않음
   - 같은 실행에서 제출한 매도 주문의 예정 매도대금은 매수 가능금액으로 선반영하지 않음
   - **쿼터매수 잔금**: broker `orderable_cash`(주문가능금액)만 사용하며 `reverse_mode.cumulative_sell_proceeds`를 합산하지 않음 — **의도적 보수 설계** (정산 매도대금은 broker가 `orderable_cash`에 반영함을 전제, `test_reverse_mode.py:50-76`로 고정). 원본(매도금 누적 합산)과 달리 하락장에서 덜 매수 = 더 안전한 쪽

@@ -176,28 +176,31 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
         star = _get_reverse_star_point(symbol, last_price, close_prices)
         adjusted_star = adjust_price_to_tick(star)
 
-        sell_qty = max(1, position_qty // divisor)
-        if sell_qty > 0 and position_qty > 0:
-            orders.append({
-                "side": "SELL",
-                "quantity": sell_qty,
-                "price": adjusted_star,
-                "order_type": "LOC",
-                "comment": f"리버스모드 {day_count}일차 LOC 매도 @별지점",
-                "t_target": 0.0,
-                "reverse_action": "sell",
-                "reverse_day": day_count,
-                "reverse_base_t": T,
-                "reverse_t_factor": sell_factor,
-            })
-        new_T_sell = round(T * sell_factor, 4)
-
-        # 같은 실행에서 제출한 매도 주문은 아직 체결되지 않았을 수 있습니다.
-        # 브로커가 반환한 실제 주문가능금액만 사용해 매수 수량을 계산합니다.
+        # 쿼터매수 가능 여부 확인 (잔금의 1/4로 1개 매수가 가능한지)
+        # 소진 기준: 쿼터매수로 1개 매수가 불가능해지는 시점
         total_cash = max(orderable_cash, 0)
         buy_amount = total_cash / 4
         buy_qty = math.floor(buy_amount / adjusted_star) if adjusted_star > 0 else 0
+
+        sell_qty = max(1, position_qty // divisor)
+
         if buy_qty > 0:
+            # 별지점 아래에서 매수 지속: LOC 매도 + LOC 매수
+            if sell_qty > 0 and position_qty > 0:
+                orders.append({
+                    "side": "SELL",
+                    "quantity": sell_qty,
+                    "price": adjusted_star,
+                    "order_type": "LOC",
+                    "comment": f"리버스모드 {day_count}일차 LOC 매도 @별지점",
+                    "t_target": 0.0,
+                    "reverse_action": "sell",
+                    "reverse_day": day_count,
+                    "reverse_base_t": T,
+                    "reverse_t_factor": sell_factor,
+                })
+            new_T_sell = round(T * sell_factor, 4)
+
             buy_price = adjust_price_to_tick(adjusted_star - 0.01)
             orders.append({
                 "side": "BUY",
@@ -216,8 +219,22 @@ def execute_reverse_mode(broker, symbol, exchange_code, splits, symbol_type,
             print(f"  → LOC 매도 {sell_qty}주 @${adjusted_star}, LOC 매수 {buy_qty}주 @${buy_price}")
             print(f"  → T: {T} → (매도{new_T_sell}) → (매수{new_T_buy}) → T={new_T}")
         else:
-            new_T = new_T_sell
-            print(f"  → LOC 매도 {sell_qty}주 @${adjusted_star}, 매수 불가 (잔금 부족)")
+            # 소진: 쿼터매수로 1개 매수가 불가능 → 매수 시도 없이 MOC 매도만
+            if sell_qty > 0 and position_qty > 0:
+                orders.append({
+                    "side": "SELL",
+                    "quantity": sell_qty,
+                    "price": adjust_price_to_tick(last_price),
+                    "order_type": "MOC",
+                    "comment": f"리버스모드 {day_count}일차 소진 MOC 매도 (쿼터매수 불가)",
+                    "t_target": 0.0,
+                    "reverse_action": "sell",
+                    "reverse_day": day_count,
+                    "reverse_base_t": T,
+                    "reverse_t_factor": sell_factor,
+                })
+            new_T = round(T * sell_factor, 4)
+            print(f"  → 소진 MOC 매도 {sell_qty}주 (쿼터매수 불가, 잔금 ${total_cash:.2f})")
             print(f"  → T: {T} → {new_T}")
 
         if day_count > 5 and position_qty <= 0:
