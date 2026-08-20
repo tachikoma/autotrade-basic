@@ -53,12 +53,15 @@ def normalize_order_price(price) -> float:
     - $1.00 이상: 소수점 2자리까지 ($0.01 단위)
 
     브로커가 거부하는 소수점 자릿수 초과 가격을 미리 차단합니다.
+
+    IEEE 754 부동소수점 오차 방지를 위해 Decimal 연산을 사용합니다.
+    예: math.floor(140.42 * 100) / 100 = 140.41 (버그) → 이 함수는 140.42 반환
     """
-    import math
+    from decimal import Decimal
     price = float(price)
     if price < 1.0:
-        return math.floor(price * 10000) / 10000
-    return math.floor(price * 100) / 100
+        return float(int(Decimal(str(price)) * 10000) / 10000)
+    return float(int(Decimal(str(price)) * 100) / 100)
 
 
 def is_us_dst() -> bool:
