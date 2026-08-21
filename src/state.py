@@ -1216,8 +1216,13 @@ def _apply_recent_history_dt(symbol, state, order_history, last_updated_dt, last
                 return state
             if balance_qty > 0:
                 # 보유 중 → 이력 조회 누락/정지 복귀로 보고 T 보존.
-                print(f"[상태] {symbol} {last_updated_dt.date()} 이후 체결 내역 없음 + 보유 {balance_qty}주 → T={state['T']} 유지 (이력 조회 누락/정지 복귀 가능)")
-                print(f"[경고] {symbol} 이력이 없는데 보유 중입니다. state.json과 잔고를 확인하세요.")
+                # 리버스모드 진행 중이면 최근 체결이 전부 리버스 주문(reconciliation에서
+                # 반영 완료)이라 일반 이력 경로 후보가 없는 것이 정상 → 경고 대신 안내만.
+                if state.get("reverse_mode", {}).get("active"):
+                    print(f"[상태] {symbol} {last_updated_dt.date()} 이후 일반모드 체결 없음 + 보유 {balance_qty}주 → T={state['T']} 유지 (리버스 체결은 reconciliation에서 반영)")
+                else:
+                    print(f"[상태] {symbol} {last_updated_dt.date()} 이후 체결 내역 없음 + 보유 {balance_qty}주 → T={state['T']} 유지 (이력 조회 누락/정지 복귀 가능)")
+                    print(f"[경고] {symbol} 이력이 없는데 보유 중입니다. state.json과 잔고를 확인하세요.")
                 return state
             # 잔고 0 → 잘못된 state.json(T>0, 잔고0, 이력0) 복구를 위해 전체 재추정.
             # 전체 이력도 비면 _infer_T_from_full_history가 T=0으로 리셋합니다.

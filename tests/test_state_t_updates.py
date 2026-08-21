@@ -218,6 +218,16 @@ class TestApplyRecentHistory:
         result = update_T_from_history("TQQQ", state, [], balance_qty=10)
         assert result["T"] == 3.0
 
+    def test_이력_없음_리버스모드면_경고_대신_안내(self, capsys):
+        """리버스모드 진행 중이면 일반모드 체결 없음이 정상 → [경고] 없이 안내만 출력."""
+        state = _make_state(T=3.0, last_updated="2026-05-27 00:00:00")
+        state["reverse_mode"] = {"active": True, "day_count": 7}
+        result = update_T_from_history("TQQQ", state, [], balance_qty=10)
+        assert result["T"] == 3.0
+        out = capsys.readouterr().out
+        assert "[경고]" not in out, f"리버스모드 중 불필요한 경고 출력:\n{out}"
+        assert "리버스 체결은 reconciliation에서 반영" in out
+
     def test_이력_없음_잔고0이면_T_리셋(self):
         """이력 없음 + 잔고 0 + T>0 → 잘못된 state 복구를 위해 T=0 리셋 (Case B)."""
         state = _make_state(T=3.0, last_updated="2026-05-27 00:00:00")

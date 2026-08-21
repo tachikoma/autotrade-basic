@@ -1001,6 +1001,11 @@ class TestKiwoomDemoBrokerContract:
         assert item["tr_mket_name"] == "NASDAQ"
         assert item["ovrs_excg_cd"] == ""
 
+        # 모의(ust21150)도 ord_dt=미국영업일 컨벤션 (2026-08-20 실측) → 보정 플래그/복원 시각
+        assert item["_ord_dt_is_us_trading_date"] is True
+        # ord_dt=20260728 + 14:30 KST → ET round-trip(offset 0) 성공 → 동일 시각 복원
+        assert item["_resolved_kst_iso"] == "2026-07-28T14:30:00+09:00"
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # TossBroker 계약 테스트

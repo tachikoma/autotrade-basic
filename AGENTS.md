@@ -173,7 +173,7 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 - **KIWOOM 모의투자 주문이력(ust21150)**: 날짜별 개별 조회, 빈 결과/`501724` 에러 시 `[정보]` 로그 출력 (line 534-545)
 - **해외주식 주문이력 날짜/시각 컨벤션 (`ord_dt` vs KST)** — `kis/ls/kiwoom/toss` 어댑터의
   `[주문이력 요약]` 출력용 참고사항. 상태 체인(`ord_datetime_utc`/`last_updated`)은 **절대 수정하지 말 것**.
-  - KIS/LS/KIWOOM-실전 해외주문 조회 응답의 `ord_dt`는 **미국(ET) 영업일**, `ord_tmd`는 **한국(KST) 시각**.
+  - KIS/LS/KIWOOM(실전·모의) 해외주문 조회 응답의 `ord_dt`는 **미국(ET) 영업일**, `ord_tmd`는 **한국(KST) 시각**.
     봇은 KST 장중(대개 04:10경, 현지 시간으로는 전일 15:xx) 주문하므로 실제 KST 날짜 = `ord_dt+1`.
     → `[주문이력 요약]`은 `미국영업일 YYYY-MM-DD | 한국시각 YYYY-MM-DD HH:MM:SS KST | odno=…` 형태로 복원 표시.
   - **상태 체인 비변경 (display-only fix)**: `ord_datetime_kst_iso`/`ord_datetime_utc_iso`(상태 저장용)는
@@ -186,7 +186,10 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
   - **브로커별 검증 상태**:
     - KIS: ✅ 실전 로그 검증 완료 (odno=45025: `20260731 041046` → 실제 KST `2026-08-01 04:10:46`).
     - TOSS: ✅ `orderedAt`이 timezone-aware ISO8601(`+09:00`) → 이미 정확한 KST → 보정 불필요.
-    - KIWOOM 모의(ust21150): ✅ `ord_dt`는 봇 루프가 KST 날짜로 주입 → 표시 정확 → 보정 불필요.
+    - KIWOOM 모의(ust21150): ✅ 실측 검증 완료 (2026-08-20 04:17 KST 제출 주문이 이력에
+      `ord_dt=20260819`로 기록 확인) — **모의도 `ord_dt`는 미국영업일 컨벤션**.
+      기존 "봇 루프가 KST 날짜 주입" 가설은 폐기, 실전과 동일하게 `resolve_real_kst_from_ord`
+      표시 보정 적용 (`_normalize_ust21150_item` → `_ord_dt_is_us_trading_date=True`).
     - LS 실전 / KIWOOM 실전(ust21100): ⚠️ **미실증** — KIS·LS·KIOM 공통 해외주식 API 컨벤션에서
       `ord_dt=미국영업일`을 추정 중이나, CI가 실제 체결(fill)을 생산하지 않음.
       `resolve_real_kst_from_ord` 보정은 display-only이므로 안전하나, 실전 배포 전

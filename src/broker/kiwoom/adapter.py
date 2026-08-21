@@ -317,15 +317,25 @@ class KiwoomBroker(Broker):
         cntr_uv = _parse_price(raw.get("cntr_uv"))
         ft_ccld_amt3 = str(cntr_qty * cntr_uv)
 
+        # 실측 확인(2026-08-20 04:17 KST 제출 주문 → ord_dt=20260819 기록):
+        # 모의(ust21150)도 ord_dt는 미국(ET) 영업일 컨벤션 → 실전(ust21100)과
+        # 동일하게 resolve_real_kst_from_ord로 표시용 실제 KST를 복원합니다.
+        resolved_kst_iso = None
+        if ord_dt and ord_tmd:
+            try:
+                resolved_kst = resolve_real_kst_from_ord(ord_dt, ord_tmd)
+                if resolved_kst is not None:
+                    resolved_kst_iso = resolved_kst.isoformat()
+            except Exception:
+                pass
+
         return {
             "ord_dt": ord_dt,
             "ord_tmd": ord_tmd,
             "ord_datetime_kst": ord_datetime_kst_iso,
             "ord_datetime_utc": ord_datetime_utc_iso,
-            # 키움 모의(ust21150): ord_dt는 봇 요청 루프에서 KST 날짜로 주입 →
-            # 미국영업일 round-trip 불필요. 모의 표시는 ord_datetime_kst 그대로.
-            "_ord_dt_is_us_trading_date": False,
-            "_resolved_kst_iso": ord_datetime_kst_iso,
+            "_ord_dt_is_us_trading_date": True,
+            "_resolved_kst_iso": resolved_kst_iso,
             "prdt_name": raw.get("frgn_stk_nm", ""),
             "sll_buy_dvsn_cd_name": raw.get("slby_tp_nm", ""),
             "ft_ord_qty": raw.get("ord_qty", "0"),
@@ -692,7 +702,7 @@ class KiwoomBroker(Broker):
                 ord_dt = item.get("ord_dt", "")
                 ord_tmd = (item.get("ord_tmd") or "")
 
-                # ord_dt 의미: 키움 실전 = 미국(ET) 영업일, 모의 = 봇 조회 KST날짜
+                # ord_dt 의미: 키움 실전/모의 모두 미국(ET) 영업일 (모의 실측 확인)
                 is_us = item.get("_ord_dt_is_us_trading_date", False)
                 if ord_dt and len(ord_dt) == 8:
                     date_header = (
