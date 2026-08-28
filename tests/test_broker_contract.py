@@ -6,10 +6,13 @@ Broker 계약 테스트 — 모든 Broker 구현체가 인터페이스 계약을
 - get_order_history 표준 필드 존재 검증
 - 예외 처리 검증
 """
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
+
+import requests
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -22,7 +25,16 @@ from broker.base import (
     OrderResult,
     BrokerError,
     OrderError,
+    OrderNotAcceptedError,
 )
+
+# NHPLUG 자격증명이 없어도 mock 기반 계약 테스트가 실행되도록,
+# 실제 키가 없을 때만 모의 자격증명을 주입합니다.
+# (conftest의 자격증명 skip 로직은 collection 시점에 env를 읽으므로
+#  모듈 import 시점에 주입해야 nhplug 마커 테스트가 skip되지 않습니다.)
+if not os.getenv("NHPLUG_APP_KEY") and not os.getenv("NHPLUG_APP_SECRET"):
+    os.environ.setdefault("NHPLUG_APP_KEY", "test_nhplug_app_key")
+    os.environ.setdefault("NHPLUG_APP_SECRET", "test_nhplug_app_secret")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1322,6 +1334,795 @@ class TestTossBrokerContract(BrokerContractTest):
     def test_place_order_returns_orderresult_or_none(self):
         broker = self._create_broker()
         result = broker.place_order("TQQQ", "NASDAQ", "BUY", 1, 50.0, "LIMIT")
+        if result is not None:
+            assert isinstance(result, OrderResult)
+            assert isinstance(result.order_id, str)
+            assert isinstance(result.order_time, str)
+            assert isinstance(result.is_reservation, bool)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# NHPlugBroker 계약 테스트
+# ═══════════════════════════════════════════════════════════════════════
+
+@pytest.mark.nhplug
+@pytest.mark.usefixtures("_patch_nhplug_dependencies")
+class TestNHPlugBrokerContract(BrokerContractTest):
+    """
+    NHPlugBroker 인터페이스 계약 테스트.
+
+    NHPlugSession.request를 mock하여 실제 API 호출 없이
+    모든 Broker 계약을 검증합니다.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_nhplug_dependencies(self, request):
+        """
+        NHPlugBroker가 의존하는 모듈들을 patch합니다.
+
+        - NHPlugSession → mock 인스턴스 반환
+        - get_access_token → 가짜 토큰 반환
+        - is_us_trading_day → True
+        - get_kst_now → 고정 시각
+        - config.BROKER_CONFIG, config.BROKER_MODE, config.HTTP_TIMEOUT → 가짜 값
+        """
+        fixed_kst = datetime(2026, 6, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+        target = "broker.nhplug.adapter"
+        patches = [
+            patch(f"{target}.NHPlugSession"),
+            patch(f"{target}.get_access_token", return_value="mock_token"),
+            patch(f"{target}.is_us_trading_day", return_value=True),
+            patch(f"{target}.get_kst_now", return_value=fixed_kst),
+            patch("config.BROKER_CONFIG", {
+                "app_key": "test",
+                "app_secret": "test",
+                "account_no": "12345678",
+                "acct_type": "01",
+                "domain": "https://api.nhplug.com:8443",
+                "live_domain": "https://api.nhplug.com:8443",
+            }),
+            patch("config.BROKER_MODE", "real"),
+            patch("config.HTTP_TIMEOUT", (10, 30)),
+        ]
+
+        for p in patches:
+            p.start()
+            request.addfinalizer(p.stop)
+
+        # NHPlugSession mock: 인스턴스 설정
+        mock_session_cls = sys.modules[f"{target}"].NHPlugSession
+        mock_session_instance = MagicMock()
+        mock_session_cls.return_value = mock_session_instance
+        self._mock_session = mock_session_instance
+
+        # 기본 응답: 모든 API가 기본적으로 성공하는 응답
+        self._setup_default_responses(mock_session_instance)
+
+    def _setup_default_responses(self, mock_session):
+        """
+        mock NHPlugSession.request에 경로 기반 기본 성공 응답을 설정합니다.
+
+        NHPLUG는 모든 TR이 POST이며 경로로 API를 구분하므로
+        side_effect에서 path를 기준으로 라우팅합니다.
+        """
+        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+            if "quote/v1/current" in path:
+                return _make_response({
+                    "Output_0": {"trdprc": "52.00", "open_prc": "50.00"},
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            elif "inquiry/v1/balance" in path:
+                return _make_response({
+                    "Output_1": [],
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            elif "inquiry/v1/buyableAmount" in path:
+                return _make_response({
+                    "Output_0": {"orr_pbl_amt": "5000.00"},
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            elif "inquiry/v1/dailyTransaction" in path:
+                return _make_response({
+                    "Output_0": [],
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            elif "quote/v1/period" in path:
+                return _make_response({
+                    "Output_1": [],
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            elif "order/v1/buy" in path or "order/v1/sell" in path:
+                return _make_response({
+                    "Output_0": {"orr_no": "202606150001"},
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            else:
+                return _make_response({
+                    "Output_0": {},
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+
+        mock_session.request.side_effect = _side_effect
+
+    def _create_broker(self):
+        """mock이 주입된 NHPlugBroker 인스턴스를 반환."""
+        from broker.nhplug.adapter import NHPlugBroker
+        broker = NHPlugBroker()
+        # rate-limit 대기 시간을 0으로 설정해 테스트 속도를 보장합니다.
+        broker._rate_limit_wait = 0
+        return broker
+
+    def _set_mock_response(self, json_data, status_code=200, headers=None):
+        """side_effect를 제거하고 return_value로 단일 응답을 설정합니다."""
+        self._mock_session.request.side_effect = None
+        self._mock_session.request.return_value = _make_response(
+            json_data, status_code, headers
+        )
+
+    # ── NHPLUG 전용 테스트 ────────────────────────────────────────────
+
+    def test_get_stock_price_values(self):
+        """반환된 StockPrice의 open/last 값이 Output_0 응답과 일치해야 합니다."""
+        self._set_mock_response({
+            "Output_0": {"open_prc": "50.00", "trdprc": "52.50"},
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        result = broker.get_stock_price("TQQQ", "NAS")
+        assert result.open == 50.0
+        assert result.last == 52.50
+
+    def test_get_stock_price_lowercase_output(self):
+        """소문자 output 키도 방어적으로 처리되어야 합니다."""
+        self._set_mock_response({
+            "output": {"open_prc": "50.00", "trdprc": "52.50"},
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        result = broker.get_stock_price("TQQQ", "NAS")
+        assert result.open == 50.0
+        assert result.last == 52.50
+
+    def test_get_stock_price_raises_brokererror_on_message_envelope(self):
+        """message 봉투(msg_code != 00000) 응답에서 BrokerError가 발생해야 합니다."""
+        self._set_mock_response({
+            "message": {"msg_code": "E0001", "usr_msg": "현재가 조회 실패"},
+        })
+        broker = self._create_broker()
+        with pytest.raises(BrokerError, match="현재가 조회 실패"):
+            broker.get_stock_price("TQQQ", "NAS")
+
+    def test_get_stock_quotation_returns_tradable(self):
+        """NHPLUG 현재가 응답에서 tradable=True(기본값)와 last가 반환되어야 합니다."""
+        self._set_mock_response({
+            "Output_0": {"trdprc": "52.00"},
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        result = broker.get_stock_quotation("TQQQ", "NAS")
+        assert result.tradable is True
+        assert result.last == 52.0
+
+    def test_get_balance_returns_none_when_no_position(self):
+        """잔고가 없으면 None을 반환해야 합니다."""
+        self._set_mock_response({
+            "Output_1": [],
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        result = broker.get_balance("TQQQ", "NAS")
+        assert result is None
+
+    def test_get_balance_with_position(self):
+        """잔고가 있으면 Balance dataclass를 반환해야 합니다."""
+        self._set_mock_response({
+            "Output_1": [
+                {"iem_cd": "TQQQ", "cns_bse_bnc_qty": "10", "fc_phs_uit_pr": "48.50"},
+            ],
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        result = broker.get_balance("TQQQ", "NAS")
+        assert result is not None
+        assert result.quantity == 10
+        assert result.avg_price == 48.50
+
+    def test_get_purchase_amount_returns_amount(self):
+        """매수가능금액이 PurchaseAmount로 반환되어야 합니다."""
+        self._set_mock_response({
+            "Output_0": {"orr_pbl_amt": "5000.00"},
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        result = broker.get_purchase_amount("TQQQ", "NAS")
+        assert isinstance(result, PurchaseAmount)
+        assert result.orderable_cash == 5000.0
+
+    def test_get_order_history_with_data(self):
+        """get_order_history가 각 항목에 표준 필드를 포함해야 합니다."""
+        self._set_mock_response({
+            "Output_0": [
+                {
+                    "ord_dt": "20260615",
+                    "ord_tmd": "093000",
+                    "prdt_name": "TQQQ",
+                    "sll_buy_dvsn_cd_name": "매수",
+                    "ft_ord_qty": "5",
+                    "ft_ccld_qty": "5",
+                    "ft_ccld_unpr3": "54.00",
+                    "ft_ccld_amt3": "270.00",
+                    "nccs_qty": "0",
+                    "prcs_stat_name": "체결완료",
+                    "tr_mket_name": "NASDAQ",
+                    "tr_crcy_cd": "USD",
+                    "odno": "36267",
+                    "ovrs_excg_cd": "NASD",
+                }
+            ],
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        history = broker.get_order_history("TQQQ", "NAS")
+
+        assert len(history) == 1
+        item = history[0]
+
+        standard_fields = {
+            "ord_dt", "ord_tmd", "ord_datetime_kst", "ord_datetime_utc",
+            "prdt_name", "sll_buy_dvsn_cd_name", "ft_ord_qty", "ft_ccld_qty",
+            "ft_ccld_unpr3", "ft_ccld_amt3", "nccs_qty", "prcs_stat_name",
+            "tr_mket_name", "tr_crcy_cd", "odno", "ovrs_excg_cd",
+        }
+        missing = standard_fields - set(item.keys())
+        assert not missing, f"표준 필드 누락: {missing}"
+
+        assert item["ord_dt"] == "20260615"
+        assert item["sll_buy_dvsn_cd_name"] == "매수"
+        assert item["ft_ccld_qty"] == "5"
+        assert item["odno"] == "36267"
+
+    def test_get_order_history_empty(self):
+        """체결 내역이 없으면 빈 리스트를 반환해야 합니다."""
+        self._set_mock_response({
+            "Output_0": [],
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        history = broker.get_order_history("TQQQ", "NAS")
+        assert history == []
+
+    def test_place_order_returns_orderresult(self):
+        """성공적인 주문은 OrderResult(order_id, order_time, is_reservation=False)를 반환."""
+        self._set_mock_response({
+            "Output_0": {"orr_no": "202606150001"},
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+        assert result is not None
+        assert isinstance(result, OrderResult)
+        assert result.order_id == "202606150001"
+        assert result.is_reservation is False
+
+    def test_place_order_message_envelope_raises_order_not_accepted(self):
+        """message 봉투 거부 응답은 OrderNotAcceptedError로 래핑되어야 합니다."""
+        self._set_mock_response({
+            "message": {"msg_code": "E0001", "usr_msg": "주문 거부"},
+        })
+        broker = self._create_broker()
+        with pytest.raises(OrderNotAcceptedError, match="주문 거부"):
+            broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+    def test_place_order_rsp_cd_error_raises_order_not_accepted(self):
+        """rsp_cd 비성공 코드(예: 14580 모의투자 장종료)는 OrderNotAcceptedError로 처리되어야 합니다."""
+        self._set_mock_response({
+            "rsp_cd": "14580",
+            "rsp_msg": "모의투자 장종료 입니다.",
+        })
+        broker = self._create_broker()
+        with pytest.raises(OrderNotAcceptedError, match="모의투자 장종료"):
+            broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+    def test_get_stock_price_rsp_cd_error_raises_brokererror(self):
+        """조회 API에서 rsp_cd 비성공 코드 응답은 BrokerError로 처리되어야 합니다."""
+        self._set_mock_response({
+            "rsp_cd": "14580",
+            "rsp_msg": "모의투자 장종료 입니다.",
+        })
+        broker = self._create_broker()
+        with pytest.raises(BrokerError, match="모의투자 장종료"):
+            broker.get_stock_price("TQQQ", "NAS")
+
+    def test_get_purchase_amount_rsp_cd_xa102_is_success(self):
+        """rsp_cd=XA102(모의투자 조회 완료)는 성공으로 처리되어야 합니다."""
+        self._set_mock_response({
+            "rsp_cd": "XA102",
+            "rsp_msg": "모의투자 조회가 완료되었습니다",
+            "Output_0": {"orr_pbl_amt": "5000.00"},
+        })
+        broker = self._create_broker()
+        result = broker.get_purchase_amount("TQQQ", "NAS")
+        assert isinstance(result, PurchaseAmount)
+        assert result.orderable_cash == 5000.0
+
+    def test_place_order_loc_converts_to_limit_in_demo(self):
+        """데모 모드에서 LOC 주문은 LIMIT(00)으로 변환되어 전송되어야 합니다."""
+        calls = {}
+
+        def _capture(method, path, token, json_body=None, extra_headers=None, domain=None):
+            calls["body"] = json_body
+            return _make_response({
+                "Output_0": {"orr_no": "demo_loc_001"},
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _capture
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "demo"):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LOC")
+
+        assert result is not None
+        assert calls["body"]["tr_cd"] == "GSO10010"
+        assert calls["body"]["Input_0"]["ahi_nmn_pr_tp_cd"] == "00"
+        assert calls["body"]["Input_0"]["fc_sec_trd_nat_cd"] == "200"
+        assert calls["body"]["Input_0"]["iem_cd"] == "TQQQ"
+        # orr_qty는 integer(int64), fc_orr_uit_pr는 number(double) — 문자열 금지
+        assert calls["body"]["Input_0"]["orr_qty"] == 1
+        assert isinstance(calls["body"]["Input_0"]["orr_qty"], int)
+        assert calls["body"]["Input_0"]["fc_orr_uit_pr"] == 50.0
+        assert isinstance(calls["body"]["Input_0"]["fc_orr_uit_pr"], float)
+        assert calls["body"]["Input_0"]["wtm_cur_knd_cd"] == "1"
+
+    def test_place_order_moc_keeps_14_in_real(self):
+        """실전 모드에서 MOC 주문은 MOC(14)로 유지되어 전송되어야 합니다."""
+        calls = {}
+
+        def _capture(method, path, token, json_body=None, extra_headers=None, domain=None):
+            calls["body"] = json_body
+            return _make_response({
+                "Output_0": {"orr_no": "real_moc_001"},
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _capture
+        broker = self._create_broker()
+        result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "MOC")
+
+        assert result is not None
+        assert calls["body"]["tr_cd"] == "GSO10010"
+        assert calls["body"]["Input_0"]["ahi_nmn_pr_tp_cd"] == "14"
+        assert calls["body"]["Input_0"]["wtm_cur_knd_cd"] == "1"
+
+    def test_place_order_sell_has_no_wtm_cur_knd_cd(self):
+        """매도 주문에는 wtm_cur_knd_cd가 포함되지 않아야 합니다 (매수 전용)."""
+        calls = {}
+
+        def _capture(method, path, token, json_body=None, extra_headers=None, domain=None):
+            calls["body"] = json_body
+            return _make_response({
+                "Output_0": {"orr_no": "real_sell_001"},
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _capture
+        broker = self._create_broker()
+        result = broker.place_order("TQQQ", "200", "SELL", 1, 50.0, "LIMIT")
+
+        assert result is not None
+        assert calls["body"]["tr_cd"] == "GSO10020"
+        assert calls["body"]["Input_0"]["ahi_nmn_pr_tp_cd"] == "00"
+        assert "wtm_cur_knd_cd" not in calls["body"]["Input_0"]
+
+    # ── 계좌번호 자동 조회 (acct_no) ──────────────────────────────────
+
+    def test_get_account_no_uses_configured_value(self):
+        """NHPLUG_ACCT_NO 설정 시 설정값을 사용하고 acctinfo를 호출하지 않아야 합니다."""
+        calls = []
+
+        def _capture(method, path, token, json_body=None, extra_headers=None, domain=None):
+            calls.append({"path": path, "body": json_body})
+            if "order/v1/buy" in path:
+                return _make_response({
+                    "Output_0": {"orr_no": "cfg_acct_001"},
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            return _make_response({
+                "Output_0": {},
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _capture
+        broker = self._create_broker()  # fixture가 account_no="12345678" 설정
+        result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+        assert result is not None
+        # acctinfo를 호출하지 않고 설정값을 그대로 사용해야 합니다.
+        assert "/n2/acctinfo" not in [c["path"] for c in calls]
+        assert calls[-1]["body"]["Input_0"]["act_no"] == "12345678"
+
+    def test_get_account_no_auto_selects_from_acctinfo(self):
+        """NHPLUG_ACCT_NO 미설정 시 /n2/acctinfo에서 모드와 일치하는 계좌를 자동 선택해야 합니다."""
+        calls = []
+
+        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+            calls.append({"path": path, "body": json_body})
+            if "acctinfo" in path:
+                return _make_response({
+                    "Output_0": [
+                        {"acct_no": "11111111", "acct_type": "01"},
+                        {"acct_no": "22222222", "acct_type": "03"},
+                    ],
+                })
+            if "order/v1/buy" in path:
+                return _make_response({
+                    "Output_0": {"orr_no": "auto_acct_001"},
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            return _make_response({
+                "Output_0": {},
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _side_effect
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
+            "app_key": "test",
+            "app_secret": "test",
+            "account_no": "",
+            "acct_type": "03",
+            "domain": "https://moapi.nhplug.com:8443",
+        }):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+        assert result is not None
+        # 1) acctinfo 조회 → 2) 주문 요청 순서로 호출되어야 합니다.
+        assert calls[0]["path"] == "/n2/acctinfo"
+        assert calls[1]["path"] == "/gbstock/order/v1/buy"
+        # demo 모드 → acct_type=03 계좌(22222222)가 선택되어야 합니다.
+        assert calls[1]["body"]["Input_0"]["act_no"] == "22222222"
+
+    def test_get_account_no_real_prefers_01(self):
+        """실전 모드에서는 acct_type=01 계좌가 02보다 우선 선택되어야 합니다."""
+        calls = []
+
+        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+            calls.append({"path": path, "body": json_body})
+            if "acctinfo" in path:
+                return _make_response({
+                    "Output_0": [
+                        {"acct_no": "22222222", "acct_type": "02"},
+                        {"acct_no": "11111111", "acct_type": "01"},
+                    ],
+                })
+            if "order/v1/buy" in path:
+                return _make_response({
+                    "Output_0": {"orr_no": "real_acct_001"},
+                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+                })
+            return _make_response({
+                "Output_0": {},
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _side_effect
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "real"), patch("config.BROKER_CONFIG", {
+            "app_key": "test",
+            "app_secret": "test",
+            "account_no": "",
+            "acct_type": "01",
+            "domain": "https://api.nhplug.com:8443",
+        }):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+        assert result is not None
+        assert calls[1]["body"]["Input_0"]["act_no"] == "11111111"
+
+    def test_get_account_no_raises_when_no_matching_account(self):
+        """적합한 계좌가 없으면 BrokerError가 발생해야 합니다."""
+        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+            if "acctinfo" in path:
+                return _make_response({
+                    "Output_0": [{"acct_no": "11111111", "acct_type": "01"}],
+                })
+            return _make_response({"Output_0": {}})
+
+        self._mock_session.request.side_effect = _side_effect
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
+            "app_key": "test",
+            "app_secret": "test",
+            "account_no": "",
+            "acct_type": "03",
+            "domain": "https://moapi.nhplug.com:8443",
+        }):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            with pytest.raises(BrokerError, match="계좌"):
+                broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+    # ── 토큰 발급 도메인 (항상 운영 도메인) ────────────────────────────
+
+    def test_get_token_uses_live_domain_in_demo(self):
+        """데모 모드에서도 토큰 발급은 운영 도메인으로 요청되어야 합니다."""
+        captured = {}
+
+        def _fake_get_access_token(domain, app_key, app_secret, timeout, session):
+            captured["domain"] = domain
+            return "mock_token"
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
+            "app_key": "test",
+            "app_secret": "test",
+            "account_no": "",
+            "acct_type": "03",
+            "domain": "https://moapi.nhplug.com:8443",
+            "live_domain": "https://api.nhplug.com:8443",
+        }), patch(
+            "broker.nhplug.adapter.get_access_token",
+            side_effect=_fake_get_access_token,
+        ):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            broker.get_stock_price("TQQQ", "NAS")
+
+        # 모의투자 도메인(moapi)이 아닌 운영 도메인으로 토큰을 요청해야 합니다.
+        assert captured["domain"] == "https://api.nhplug.com:8443"
+
+    def test_get_access_token_uses_live_domain_url(self):
+        """get_access_token은 모의 도메인을 전달받아도 운영 도메인 URL로 토큰을 요청해야 합니다."""
+        from broker.nhplug import auth as nhplug_auth
+
+        # 전역 토큰 캐시 초기화 (이전 테스트의 캐시 영향 방지)
+        nhplug_auth._cached_token = None
+        nhplug_auth._token_expires_at = 0.0
+
+        captured = {}
+
+        def _fake_post(url, **kwargs):
+            captured["url"] = url
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.ok = True
+            resp.raise_for_status = MagicMock()
+            resp.json.return_value = {
+                "access_token": "mock_token",
+                "expires_in": 86400,
+            }
+            return resp
+
+        mock_session = MagicMock()
+        mock_session.post.side_effect = _fake_post
+
+        token = nhplug_auth.get_access_token(
+            domain="https://moapi.nhplug.com:8443",
+            app_key="test",
+            app_secret="test",
+            timeout=(10, 30),
+            session=mock_session,
+        )
+
+        assert token == "mock_token"
+        # 모의투자 도메인을 전달해도 운영 도메인 URL로 발급 요청이 가야 합니다.
+        assert captured["url"] == "https://api.nhplug.com:8443/oauth2/token"
+
+    # ── 시세 API 운영 서버 라우팅 (모의 서버는 시세 미지원) ────────────
+
+    def test_quote_current_uses_live_domain_in_demo(self):
+        """데모 모드에서도 시세(current)는 운영 도메인으로 호출되어야 합니다."""
+        captured = {}
+
+        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+            captured["path"] = path
+            captured["domain"] = domain
+            return _make_response({
+                "Output_0": {"trdprc": "52.00", "open_prc": "50.00"},
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _side_effect
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
+            "app_key": "test",
+            "app_secret": "test",
+            "account_no": "12345678",
+            "acct_type": "03",
+            "domain": "https://moapi.nhplug.com:8443",
+            "live_domain": "https://api.nhplug.com:8443",
+        }):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            broker.get_stock_price("TQQQ", "NAS")
+
+        assert captured["path"] == "/gbstock/quote/v1/current"
+        assert captured["domain"] == "https://api.nhplug.com:8443"
+
+    def test_quote_period_uses_live_domain_in_demo(self):
+        """데모 모드에서도 기간별시세(period)는 운영 도메인으로 호출되어야 합니다."""
+        captured = {}
+
+        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+            captured["path"] = path
+            captured["domain"] = domain
+            return _make_response({
+                "Output_1": [{"close_prc": "52.00"}],
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _side_effect
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
+            "app_key": "test",
+            "app_secret": "test",
+            "account_no": "12345678",
+            "acct_type": "03",
+            "domain": "https://moapi.nhplug.com:8443",
+            "live_domain": "https://api.nhplug.com:8443",
+        }):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            broker.get_daily_closes("TQQQ", "NAS", days=5)
+
+        assert captured["path"] == "/gbstock/quote/v1/period"
+        assert captured["domain"] == "https://api.nhplug.com:8443"
+
+    def test_inquiry_keeps_mode_domain_in_demo(self):
+        """데모 모드에서 조회(balance)는 모의 도메인(domain 미지정)으로 호출되어야 합니다."""
+        captured = {}
+
+        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+            captured["path"] = path
+            captured["domain"] = domain
+            return _make_response({
+                "Output_1": [],
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _side_effect
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
+            "app_key": "test",
+            "app_secret": "test",
+            "account_no": "12345678",
+            "acct_type": "03",
+            "domain": "https://moapi.nhplug.com:8443",
+            "live_domain": "https://api.nhplug.com:8443",
+        }):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            broker.get_balance("TQQQ", "NAS")
+
+        assert captured["path"] == "/gbstock/inquiry/v1/balance"
+        # domain 미지정(None) → 세션이 모드별 도메인(moapi)을 사용합니다.
+        assert captured["domain"] is None
+
+    def test_order_keeps_mode_domain_in_demo(self):
+        """데모 모드에서 주문(buy)은 모의 도메인(domain 미지정)으로 호출되어야 합니다."""
+        captured = {}
+
+        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+            captured["path"] = path
+            captured["domain"] = domain
+            return _make_response({
+                "Output_0": {"orr_no": "demo_order_001"},
+                "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+            })
+
+        self._mock_session.request.side_effect = _side_effect
+
+        from broker.nhplug.adapter import NHPlugBroker
+        with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
+            "app_key": "test",
+            "app_secret": "test",
+            "account_no": "12345678",
+            "acct_type": "03",
+            "domain": "https://moapi.nhplug.com:8443",
+            "live_domain": "https://api.nhplug.com:8443",
+        }):
+            broker = NHPlugBroker()
+            broker._rate_limit_wait = 0
+            broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+        assert captured["path"] == "/gbstock/order/v1/buy"
+        # domain 미지정(None) → 세션이 모드별 도메인(moapi)을 사용합니다.
+        assert captured["domain"] is None
+
+    def test_session_request_uses_domain_param(self):
+        """NHPlugSession.request는 domain 파라미터로 URL 베이스를 결정해야 합니다."""
+        from broker.nhplug.session import NHPlugSession
+
+        session = NHPlugSession(
+            "https://moapi.nhplug.com:8443",
+            app_key="test",
+            app_secret="test",
+            timeout=(10, 30),
+        )
+        # 내부 requests.Session을 mock (실제 네트워크 호출 방지)
+        session._session = MagicMock()
+        session._session.request.return_value = _make_response({
+            "Output_0": {},
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+
+        # domain 지정 → 운영 도메인 URL
+        session.request(
+            "POST", "/gbstock/quote/v1/current", "mock_token",
+            json_body={}, domain="https://api.nhplug.com:8443",
+        )
+        url = session._session.request.call_args[0][1]
+        assert url == "https://api.nhplug.com:8443/gbstock/quote/v1/current"
+
+        # domain 미지정 → 모드별 도메인(moapi) URL
+        session.request(
+            "POST", "/gbstock/inquiry/v1/balance", "mock_token", json_body={},
+        )
+        url = session._session.request.call_args[0][1]
+        assert url == "https://moapi.nhplug.com:8443/gbstock/inquiry/v1/balance"
+
+    def test_place_order_network_timeout_raises_ordererror(self):
+        """네트워크 타임아웃은 OrderError(접수 불확실)로 래핑되어야 합니다."""
+        self._mock_session.request.side_effect = requests.exceptions.Timeout(
+            "connection timed out"
+        )
+        broker = self._create_broker()
+        with pytest.raises(OrderError) as excinfo:
+            broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+        # OrderNotAcceptedError(미접수 확정)가 아닌 일반 OrderError여야 합니다.
+        assert not isinstance(excinfo.value, OrderNotAcceptedError)
+
+    def test_get_daily_closes_returns_oldest_first(self):
+        """get_daily_closes는 오래된 순으로 정렬된 종가 리스트를 반환해야 합니다."""
+        self._set_mock_response({
+            "Output_1": [
+                {"close_prc": "55.00"},
+                {"close_prc": "54.00"},
+                {"close_prc": "53.00"},
+                {"close_prc": "52.00"},
+                {"close_prc": "51.00"},
+            ],
+            "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
+        })
+        broker = self._create_broker()
+        closes = broker.get_daily_closes("TQQQ", "NAS", days=5)
+        assert closes == [51.0, 52.0, 53.0, 54.0, 55.0]
+
+    # ── NHPLUG 거래소 코드 매핑 (NHPLUG 전용) ─────────────────────────
+    # NHPLUG는 미국 주식 모두 fc_sec_trd_nat_cd="200"을 사용합니다 (NAS/NYS/AMS 구분 없음)
+
+    def test_exchange_code_nas_to_200(self):
+        broker = self._create_broker()
+        assert broker.exchange_code("NAS") == "200"
+
+    def test_exchange_code_nys_to_200(self):
+        broker = self._create_broker()
+        assert broker.exchange_code("NYS") == "200"
+
+    def test_exchange_code_ams_to_200(self):
+        broker = self._create_broker()
+        assert broker.exchange_code("AMS") == "200"
+
+    # ── Base 계약 테스트 오버라이드 ────────────────────────────────────
+    # NHPLUG place_order는 broker.exchange_code()로 변환된 API 국가코드("200")를 받습니다.
+
+    def test_place_order_returns_orderresult_or_none(self):
+        broker = self._create_broker()
+        result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
         if result is not None:
             assert isinstance(result, OrderResult)
             assert isinstance(result.order_id, str)

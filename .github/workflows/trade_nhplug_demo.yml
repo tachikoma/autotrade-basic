@@ -1,0 +1,35 @@
+name: 무한매수법 실행 (NHPlug Demo)
+
+# NH투자증권 나무 모의투자 계좌 실행
+# GitHub Environment: nhplug-demo (secrets/variables 분리)
+# 캐시 키: state-nhplug-demo-*
+# Runner: ubuntu-latest (NHPLUG는 접근 IP 제약이 확인되지 않아 self-hosted 불필요)
+
+on:
+  repository_dispatch:
+    types:
+      - trigger_trade_nhplug_demo
+  workflow_dispatch:
+    inputs:
+      trade_mode:
+        description: '거래 모드 선택 (기본: LIVE)'
+        required: false
+        type: choice
+        options:
+          - DRY
+          - LIVE
+      symbols:
+        description: '거래 심볼 (예: TQQQ:NAS,SOXL:AMS) — 비워두면 환경 변수 SYMBOLS 사용'
+        required: false
+        type: string
+
+jobs:
+  trade_nhplug_demo:
+    uses: ./.github/workflows/trade_base.yml
+    with:
+      broker: nhplug
+      broker_mode: demo
+      trade_mode: ${{ github.event.inputs.trade_mode || github.event.client_payload.trade_mode || '' }}
+      symbols: ${{ github.event.inputs.symbols || github.event.client_payload.symbols || '' }}
+
+    secrets: inherit

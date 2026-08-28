@@ -38,6 +38,8 @@ _REQUIRED_KEYS = {
     "kiwoom": ("KIWOOM_APP_KEY", "KIWOOM_APP_SECRET"),
     "ls": ("LS_APP_KEY", "LS_APP_SECRET"),
     "toss": ("TOSS_APP_KEY", "TOSS_APP_SECRET"),
+    # NHPLUG는 계좌번호(NHPLUG_ACCT_NO)가 선택이므로 게이트에 포함하지 않습니다.
+    "nhplug": ("NHPLUG_APP_KEY", "NHPLUG_APP_SECRET"),
 }
 
 

@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       broker:
-        description: '증권사 (kis, kiwoom, ls, toss)'
+        description: '증권사 (kis, kiwoom, ls, toss, nhplug)'
         required: false
         type: string
         default: kis
@@ -55,6 +55,13 @@ on:
       TOSS_APP_KEY:
         required: false
       TOSS_APP_SECRET:
+        required: false
+      # NHPLUG secrets (broker=nhplug 일 때만 사용됨)
+      NHPLUG_APP_KEY:
+        required: false
+      NHPLUG_APP_SECRET:
+        required: false
+      NHPLUG_ACCT_NO:
         required: false
       # 공통 secrets
       TELEGRAM_BOT_TOKEN:
@@ -137,6 +144,11 @@ jobs:
           TOSS_APP_KEY: ${{ secrets.TOSS_APP_KEY }}
           TOSS_APP_SECRET: ${{ secrets.TOSS_APP_SECRET }}
           TOSS_ACCOUNT_SEQ: ${{ vars.TOSS_ACCOUNT_SEQ }}
+
+          # NHPLUG 인증정보 (environment에서 주입 — broker=nhplug 일 때만 값이 있음)
+          NHPLUG_APP_KEY: ${{ secrets.NHPLUG_APP_KEY }}
+          NHPLUG_APP_SECRET: ${{ secrets.NHPLUG_APP_SECRET }}
+          NHPLUG_ACCT_NO: ${{ secrets.NHPLUG_ACCT_NO }}
 
           # 런타임 설정: inputs -> environment vars -> 모드별 기본값 순으로 폴백
           # real 환경은 기본 DRY (fail-safe: 명시적으로 LIVE 선택해야 실전 주문)

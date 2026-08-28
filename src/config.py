@@ -7,7 +7,7 @@ load_dotenv()
 
 # 증권사 선택
 # 환경변수 BROKER로 사용할 증권사를 선택합니다.
-# 지원: kis(기본값), kiwoom, ls, toss
+# 지원: kis(기본값), kiwoom, ls, toss, nhplug
 # .env 예: BROKER=kis
 BROKER = os.getenv("BROKER", "kis").strip().lower()
 
@@ -54,6 +54,28 @@ def _get_broker_config(broker_name: str) -> dict:
             "account_seq": os.getenv("TOSS_ACCOUNT_SEQ", ""),
             "domain": "https://openapi.tossinvest.com",
         },
+        "nhplug": {
+            "app_key": os.getenv("NHPLUG_APP_KEY", ""),
+            "app_secret": os.getenv("NHPLUG_APP_SECRET", ""),
+            "account_no": os.getenv("NHPLUG_ACCT_NO", ""),
+            # 01:실전, 03:모의 (기본값: BROKER_MODE 기반)
+            "acct_type": (
+                os.getenv("NHPLUG_ACCT_TYPE", "").strip()
+                or ("01" if BROKER_MODE == "real" else "03")
+            ),
+            # NHPLUG_BASE_URL 미설정 시 BROKER_MODE 기반 자동 선택
+            "domain": (
+                os.getenv("NHPLUG_BASE_URL", "").strip()
+                or (
+                    "https://api.nhplug.com:8443"
+                    if BROKER_MODE == "real"
+                    else "https://moapi.nhplug.com:8443"
+                )
+            ),
+            # 토큰 발급 전용 운영 도메인 — 모의투자 서버(moapi)는 토큰 발급을
+            # 지원하지 않아 403을 반환하므로, 토큰 발급은 항상 운영 도메인에서 수행합니다.
+            "live_domain": "https://api.nhplug.com:8443",
+        },
     }
     return configs.get(broker_name, {})
 
@@ -65,6 +87,8 @@ if BROKER == "kis" and not BROKER_CONFIG.get("account_no", ""):
     print("경고: BROKER=kis 이지만 KIS_ACCOUNT_NO가 설정되어 있지 않습니다.")
 if BROKER == "toss" and not BROKER_CONFIG.get("account_seq", ""):
     print("경고: BROKER=toss 이지만 TOSS_ACCOUNT_SEQ가 설정되어 있지 않습니다.")
+if BROKER == "nhplug" and not BROKER_CONFIG.get("app_key", ""):
+    print("경고: BROKER=nhplug 이지만 NHPLUG_APP_KEY가 설정되어 있지 않습니다.")
 
 # ── 키움/LS/토스 증권 API 설정 (BROKER_CONFIG에서 관리) ──
 

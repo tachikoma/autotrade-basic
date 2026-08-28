@@ -52,10 +52,13 @@ def create_broker() -> Broker:
     elif BROKER == "toss":
         from broker.toss.adapter import TossBroker
         broker = TossBroker()
+    elif BROKER == "nhplug":
+        from broker.nhplug.adapter import NHPlugBroker
+        broker = NHPlugBroker()
     else:
         raise ValueError(
             f"알 수 없는 증권사입니다: BROKER={BROKER}. "
-            f"지원: kis, kiwoom, ls, toss"
+            f"지원: kis, kiwoom, ls, toss, nhplug"
         )
 
     if TRADE_MODE == "DRY":
