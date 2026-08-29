@@ -220,11 +220,9 @@ def run_one_symbol(broker: Broker, symbol_config):
 
     state = load_state(symbol)
 
-    if TRADE_MODE == "LIVE" and state.get("_state_unavailable"):
-        raise RuntimeError(
-            f"{symbol} 상태 파일을 확인할 수 없어 LIVE 주문을 중단합니다: "
-            f"{state['_state_unavailable']}"
-        )
+    # _state_unavailable 플래그만 보관 — 즉시 차단하지 않고 아래에서
+    # order_history/balance 조회 후 스마트 부트스트랩 여부를 판단합니다.
+    state_unavailable = state.get("_state_unavailable")
 
     unresolved_zero_invested = (
         state.get("net_invested_status", "unresolved") != "valid"
@@ -293,6 +291,22 @@ def run_one_symbol(broker: Broker, symbol_config):
         live_balance = None
         live_qty = None
         live_avg = None
+
+    # ── 첫 실행 부트스트랩 (state 없음 + 보유 0 + 이력 0) ──
+    # state 파일이 없/손상/미등록이어도, 실제 보유와 이력이 모두 비어 있으면
+    # 첫 실행으로 간주해 T=0 LIVE 진행을 허용합니다. 그 외는 기존처럼 차단합니다.
+    if TRADE_MODE == "LIVE" and state_unavailable:
+        history_filled = sum(
+            1 for o in order_history
+            if int(float(o.get("ft_ccld_qty", "0") or 0)) > 0
+        )
+        if history_filled == 0 and live_qty in (0, None):
+            print(f"[초기 부트스트랩] {symbol} 첫 실행 → T=0 LIVE 허용")
+        else:
+            raise RuntimeError(
+                f"{symbol} 상태 파일을 확인할 수 없어 LIVE 주문을 중단합니다: "
+                f"{state_unavailable}"
+            )
 
     state = update_T_from_history(symbol, state, order_history, balance_qty=live_qty)
 
@@ -1470,9 +1484,34 @@ def main():
             for cfg in SYMBOLS:
                 preflight_state = load_state(cfg["symbol"])
                 if preflight_state.get("_state_unavailable"):
-                    raise RuntimeError(
-                        f"LIVE preflight 실패: {cfg['symbol']} state를 확인할 수 없습니다."
-                    )
+                    # 첫 실행 부트스트랩: state가 없어도 보유 0 + 이력 0이면 LIVE 허용
+                    _pf_symbol = cfg["symbol"]
+                    _pf_exchange = cfg["exchange"]
+                    try:
+                        _pf_balance = broker.get_balance(_pf_symbol, _pf_exchange)
+                        _pf_qty = _pf_balance.quantity if _pf_balance else 0
+                        _pf_history = broker.get_order_history(
+                            _pf_symbol, _pf_exchange, days=30, verbose=False
+                        )
+                        _pf_filled = sum(
+                            1 for o in _pf_history
+                            if int(float(o.get("ft_ccld_qty", "0") or 0)) > 0
+                        )
+                    except Exception as _pf_err:
+                        raise RuntimeError(
+                            f"LIVE preflight 실패: {_pf_symbol} state를 확인할 수 없습니다. "
+                            f"보유/이력 조회 실패({_pf_err}) → DRY+FORCE_T_REINFERENCE 필요"
+                        )
+                    if _pf_qty in (0, None) and _pf_filled == 0:
+                        print(
+                            f"[preflight] {_pf_symbol} 첫 실행 확인(보유 0, 이력 0) "
+                            f"→ LIVE 부트스트랩 허용"
+                        )
+                    else:
+                        raise RuntimeError(
+                            f"LIVE preflight 실패: {_pf_symbol} state를 확인할 수 없습니다. "
+                            f"보유/이력이 있어 DRY+FORCE_T_REINFERENCE 필요"
+                        )
                 # 주문 fence는 종목별 복구 대상입니다. 전체 중단 없이
                 # run_one_symbol()이 이전 세션 이력 reconciliation으로 복구를 시도합니다.
                 if preflight_state.get("pending_order_intent") or preflight_state.get("pending_order_batch"):
