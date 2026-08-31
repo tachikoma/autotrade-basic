@@ -32,14 +32,13 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # 브로커 마커 → 필수 환경변수 매핑.
 # 마커가 붙은 테스트는 이 키가 하나라도 없으면 skip됩니다.
-# KIS는 계좌번호(KIS_ACCOUNT_NO) 없이 API 호출이 금지되므로 게이트에 포함합니다.
+# KIS/NHPLUG는 계좌번호 없이 API 호출이 금지되므로 게이트에 포함합니다.
 _REQUIRED_KEYS = {
     "kis": ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO"),
     "kiwoom": ("KIWOOM_APP_KEY", "KIWOOM_APP_SECRET"),
     "ls": ("LS_APP_KEY", "LS_APP_SECRET"),
     "toss": ("TOSS_APP_KEY", "TOSS_APP_SECRET"),
-    # NHPLUG는 계좌번호(NHPLUG_ACCT_NO)가 선택이므로 게이트에 포함하지 않습니다.
-    "nhplug": ("NHPLUG_APP_KEY", "NHPLUG_APP_SECRET"),
+    "nhplug": ("NHPLUG_APP_KEY", "NHPLUG_APP_SECRET", "NHPLUG_ACCT_NO"),
 }
 
 

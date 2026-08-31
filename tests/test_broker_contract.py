@@ -35,6 +35,8 @@ from broker.base import (
 if not os.getenv("NHPLUG_APP_KEY") and not os.getenv("NHPLUG_APP_SECRET"):
     os.environ.setdefault("NHPLUG_APP_KEY", "test_nhplug_app_key")
     os.environ.setdefault("NHPLUG_APP_SECRET", "test_nhplug_app_secret")
+if not os.getenv("NHPLUG_ACCT_NO"):
+    os.environ.setdefault("NHPLUG_ACCT_NO", "test_nhplug_acct_no")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1746,29 +1748,17 @@ class TestNHPlugBrokerContract(BrokerContractTest):
         assert calls[-1]["body"]["Input_0"]["act_no"] == "12345678"
 
     def test_get_account_no_auto_selects_from_acctinfo(self):
-        """NHPLUG_ACCT_NO 미설정 시 /n2/acctinfo에서 모드와 일치하는 계좌를 자동 선택해야 합니다."""
+        """NHPLUG_ACCT_NO 미설정 시 BrokerError가 발생하고 acctinfo를 호출하지 않아야 합니다."""
         calls = []
 
-        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+        def _capture(method, path, token, json_body=None, extra_headers=None, domain=None):
             calls.append({"path": path, "body": json_body})
-            if "acctinfo" in path:
-                return _make_response({
-                    "Output_0": [
-                        {"acct_no": "11111111", "acct_type": "01"},
-                        {"acct_no": "22222222", "acct_type": "03"},
-                    ],
-                })
-            if "order/v1/buy" in path:
-                return _make_response({
-                    "Output_0": {"orr_no": "auto_acct_001"},
-                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
-                })
             return _make_response({
-                "Output_0": {},
+                "Output_0": {"orr_no": "should_not_succeed"},
                 "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
             })
 
-        self._mock_session.request.side_effect = _side_effect
+        self._mock_session.request.side_effect = _capture
 
         from broker.nhplug.adapter import NHPlugBroker
         with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
@@ -1780,39 +1770,25 @@ class TestNHPlugBrokerContract(BrokerContractTest):
         }):
             broker = NHPlugBroker()
             broker._rate_limit_wait = 0
-            result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+            with pytest.raises(BrokerError, match="NHPLUG_ACCT_NO"):
+                broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
 
-        assert result is not None
-        # 1) acctinfo 조회 → 2) 주문 요청 순서로 호출되어야 합니다.
-        assert calls[0]["path"] == "/n2/acctinfo"
-        assert calls[1]["path"] == "/gbstock/order/v1/buy"
-        # demo 모드 → acct_type=03 계좌(22222222)가 선택되어야 합니다.
-        assert calls[1]["body"]["Input_0"]["act_no"] == "22222222"
+        # 자동 선택 제거 — acctinfo나 주문 API를 호출하지 않아야 합니다.
+        assert "/n2/acctinfo" not in [c["path"] for c in calls]
+        assert not any("order/v1/buy" in c["path"] for c in calls)
 
     def test_get_account_no_real_prefers_01(self):
-        """실전 모드에서는 acct_type=01 계좌가 02보다 우선 선택되어야 합니다."""
+        """실전 모드에서도 NHPLUG_ACCT_NO 미설정 시 BrokerError가 발생해야 합니다."""
         calls = []
 
-        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
+        def _capture(method, path, token, json_body=None, extra_headers=None, domain=None):
             calls.append({"path": path, "body": json_body})
-            if "acctinfo" in path:
-                return _make_response({
-                    "Output_0": [
-                        {"acct_no": "22222222", "acct_type": "02"},
-                        {"acct_no": "11111111", "acct_type": "01"},
-                    ],
-                })
-            if "order/v1/buy" in path:
-                return _make_response({
-                    "Output_0": {"orr_no": "real_acct_001"},
-                    "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
-                })
             return _make_response({
-                "Output_0": {},
+                "Output_0": {"orr_no": "should_not_succeed"},
                 "message": {"msg_code": "", "usr_msg": "", "dvlp_msg": ""},
             })
 
-        self._mock_session.request.side_effect = _side_effect
+        self._mock_session.request.side_effect = _capture
 
         from broker.nhplug.adapter import NHPlugBroker
         with patch("config.BROKER_MODE", "real"), patch("config.BROKER_CONFIG", {
@@ -1824,21 +1800,20 @@ class TestNHPlugBrokerContract(BrokerContractTest):
         }):
             broker = NHPlugBroker()
             broker._rate_limit_wait = 0
-            result = broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+            with pytest.raises(BrokerError, match="NHPLUG_ACCT_NO"):
+                broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
 
-        assert result is not None
-        assert calls[1]["body"]["Input_0"]["act_no"] == "11111111"
+        assert "/n2/acctinfo" not in [c["path"] for c in calls]
 
     def test_get_account_no_raises_when_no_matching_account(self):
-        """적합한 계좌가 없으면 BrokerError가 발생해야 합니다."""
-        def _side_effect(method, path, token, json_body=None, extra_headers=None, domain=None):
-            if "acctinfo" in path:
-                return _make_response({
-                    "Output_0": [{"acct_no": "11111111", "acct_type": "01"}],
-                })
+        """NHPLUG_ACCT_NO 미설정 시 BrokerError가 발생해야 합니다 (계좌 자동 조회 없음)."""
+        calls = []
+
+        def _capture(method, path, token, json_body=None, extra_headers=None, domain=None):
+            calls.append({"path": path, "body": json_body})
             return _make_response({"Output_0": {}})
 
-        self._mock_session.request.side_effect = _side_effect
+        self._mock_session.request.side_effect = _capture
 
         from broker.nhplug.adapter import NHPlugBroker
         with patch("config.BROKER_MODE", "demo"), patch("config.BROKER_CONFIG", {
@@ -1850,8 +1825,10 @@ class TestNHPlugBrokerContract(BrokerContractTest):
         }):
             broker = NHPlugBroker()
             broker._rate_limit_wait = 0
-            with pytest.raises(BrokerError, match="계좌"):
+            with pytest.raises(BrokerError, match="NHPLUG_ACCT_NO"):
                 broker.place_order("TQQQ", "200", "BUY", 1, 50.0, "LIMIT")
+
+        assert "/n2/acctinfo" not in [c["path"] for c in calls]
 
     # ── 토큰 발급 도메인 (항상 운영 도메인) ────────────────────────────
 

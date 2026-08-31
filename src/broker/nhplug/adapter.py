@@ -95,9 +95,6 @@ class NHPlugBroker(Broker):
             timeout=HTTP_TIMEOUT,
         )
 
-        # /n2/acctinfo 자동 조회 결과 캐시 (NHPLUG_ACCT_NO 미설정 시 사용)
-        self._cached_account_no = None
-
         # rate-limit: 실전/모의 공통으로 보수적 대기 (모의 1회/초 기준)
         self._rate_limit_wait = 0.05 if self._mode == "real" else 1.0
 
@@ -134,71 +131,20 @@ class NHPlugBroker(Broker):
         주문/잔고 API에 사용할 계좌번호를 반환합니다.
 
         NHPLUG API의 acct_no는 모든 해외주식 주문/잔고 API의 필수 필드입니다.
-        - NHPLUG_ACCT_NO가 설정되어 있으면 그 값을 반환합니다 (기존 동작 유지).
-        - 미설정 시 POST /n2/acctinfo로 계좌 목록을 조회해 현재 모드와
-          일치하는 계좌를 자동 선택합니다:
-            - demo: acct_type == "03" (모의투자)
-            - real: acct_type in ("01", "02") (01 우선)
-        - 계좌가 여러 개면 첫 번째를 사용하고, 없으면 BrokerError를 발생합니다.
-        - 조회 결과는 인스턴스 변수에 캐싱되어 매 호출마다 API를 호출하지 않습니다.
+        NHPLUG_ACCT_NO 환경변수가 필수이며, 미설정 시 BrokerError를 발생합니다.
 
         Returns:
             str: 계좌번호
 
         Raises:
-            BrokerError: 적합한 계좌가 없거나 조회에 실패한 경우
+            BrokerError: NHPLUG_ACCT_NO가 설정되지 않은 경우
         """
         if self._account_no:
             return self._account_no
-
-        if self._cached_account_no is not None:
-            return self._cached_account_no
-
-        token = self._get_token()
-        body = self._build_body(TR_ID_ACCTINFO, "", {})
-
-        try:
-            data = self._request_with_rate_retry(
-                "/n2/acctinfo", body, token
-            )
-            output = self._extract_output(data, "Output_0") or []
-            if isinstance(output, dict):
-                output = [output]
-
-            if self._mode == "demo":
-                candidates = [
-                    item for item in output
-                    if str(item.get("acct_type", "")).strip() == "03"
-                ]
-            else:
-                # 실전: 01(운영일반) 우선, 없으면 02(운영주문대리인)
-                candidates = [
-                    item for item in output
-                    if str(item.get("acct_type", "")).strip() in ("01", "02")
-                ]
-                candidates.sort(
-                    key=lambda item: str(item.get("acct_type", "")).strip() != "01"
-                )
-
-            if not candidates:
-                mode_label = "모의투자(03)" if self._mode == "demo" else "실전(01/02)"
-                raise BrokerError(
-                    f"NHPLUG 계좌번호 자동 조회 실패: /n2/acctinfo 응답에 "
-                    f"{mode_label} 계좌가 없습니다. "
-                    "NHPLUG_ACCT_NO 환경변수를 설정하거나 계좌를 등록해주세요."
-                )
-
-            acct_no = str(candidates[0].get("acct_no", "")).strip()
-            if not acct_no:
-                raise BrokerError(
-                    "NHPLUG 계좌번호 자동 조회 실패: acct_no 필드가 비어 있습니다."
-                )
-
-            self._cached_account_no = acct_no
-            return acct_no
-
-        except requests.exceptions.RequestException as e:
-            raise BrokerError(f"계좌번호 조회 실패: {str(e)}")
+        raise BrokerError(
+            "NHPLUG_ACCT_NO 환경변수가 설정되지 않았습니다. "
+            "NHPLUG 계좌번호를 설정해주세요."
+        )
 
     @staticmethod
     def _to_float(value, default: float = 0.0) -> float:
@@ -249,8 +195,7 @@ class NHPlugBroker(Broker):
         Input_0 블록을 구성합니다.
 
         계좌번호(act_no)는 NHPLUG 주문/잔고 API의 필수 필드이므로 항상 포함합니다.
-        NHPLUG_ACCT_NO가 설정되어 있으면 그 값을, 미설정 시 /n2/acctinfo로
-        자동 조회한 계좌번호를 사용합니다.
+        NHPLUG_ACCT_NO 환경변수가 필수입니다.
         """
         block = {"acct_type": self._acct_type}
         block["act_no"] = self._get_account_no()

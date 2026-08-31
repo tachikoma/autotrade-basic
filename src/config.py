@@ -89,6 +89,8 @@ if BROKER == "toss" and not BROKER_CONFIG.get("account_seq", ""):
     print("경고: BROKER=toss 이지만 TOSS_ACCOUNT_SEQ가 설정되어 있지 않습니다.")
 if BROKER == "nhplug" and not BROKER_CONFIG.get("app_key", ""):
     print("경고: BROKER=nhplug 이지만 NHPLUG_APP_KEY가 설정되어 있지 않습니다.")
+if BROKER == "nhplug" and not BROKER_CONFIG.get("account_no", ""):
+    print("경고: BROKER=nhplug 이지만 NHPLUG_ACCT_NO가 설정되어 있지 않습니다.")
 
 # ── 키움/LS/토스 증권 API 설정 (BROKER_CONFIG에서 관리) ──
 
