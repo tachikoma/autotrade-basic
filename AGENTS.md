@@ -5,7 +5,7 @@
 **Branch:** `develop`
 
 ## OVERVIEW
-미국 주식 자동매매 봇 (Python). 4개 증권사(KIS, KIWOOM, LS, TOSS) API를 지원하며, 무한매수법 V4 전략을 실행. GitHub Actions에서 `repository_dispatch`로 트리거됨.
+미국 주식 자동매매 봇 (Python). 5개 증권사(KIS, KIWOOM, LS, TOSS, NHPLUG) API를 지원하며, 무한매수법 V4 전략을 실행. GitHub Actions에서 `repository_dispatch`로 트리거됨.
 
 ## STRUCTURE
 ```
@@ -17,6 +17,7 @@ autotrade-basic/
 │   │   ├── kiwoom/      # 키움증권
 │   │   ├── ls/          # LS증권
 │   │   ├── toss/        # 토스증권
+│   │   ├── nhplug/      # NH투자증권 나무
 │   │   └── market_utils.py  # 시간/시장 유틸리티
 │   ├── market_data.py   # 시세 데이터 (Finnhub 5일 MA)
 │   ├── strategy.py      # 전략 로직 (+ 리버스모드)
@@ -33,7 +34,7 @@ autotrade-basic/
 | Task | Location | Notes |
 |------|----------|-------|
 | 전략 로직 이해 | src/strategy.py | `무한매수법_V4()`, T값/별지점 계산, `execute_reverse_mode()` |
-| 브로커 구현 | src/broker/{kis,kiwoom,ls,toss}/ | 각 브로커별 API 어댑터 |
+| 브로커 구현 | src/broker/{kis,kiwoom,ls,toss,nhplug}/ | 각 브로커별 API 어댑터 |
 | 공통 인터페이스 | src/broker/base.py | `Broker`, `OrderResult`, `BrokerError`, `get_daily_closes()` |
 | 일봉 종가 조회 | src/broker/base.py `get_daily_closes()` | TR: KIS=HHDFS76240000, LS=g3204, KIWOOM=usa06012, TOSS=GET /api/v1/candles |
 | 상태 파일 관리 | src/state.py | state.json 로드/저장, T 갱신, reverse_mode 상태 |
@@ -63,7 +64,7 @@ autotrade-basic/
 ## ANTI-PATTERNS (THIS PROJECT)
 - `__pycache__/` — 절대 커밋 금지 (`.gitignore`에 있음)
 - `.state.json` — 커밋 금지 (GH Actions 캐시로만 관리)
-- `KIS_ACCOUNT_NO` 없는 상태로 KIS API 호출 금지 (KIWOOM/LS/TOSS는 계좌번호 불필요)
+- `KIS_ACCOUNT_NO` / `NHPLUG_ACCT_NO` 없는 상태로 KIS/NHPLUG API 호출 금지 (KIWOOM/LS/TOSS는 계좌번호 불필요)
 - 모의투자 미지원 주문 유형(LOC/LOO/MOC/MOO) → 자동 LIMIT 변환 (broker별 adapter)
 - 주문가 소수점 초과(예: $1+ 3자리) 전송 금지 — 각 broker `place_order()`가 `normalize_order_price()`로 호가 단위($1+ → 2자리, $1 미만 → 4자리, 버림) 정규화 후 전송
 - `TRADE_MODE` 무단 LIVE 전환 금지 (DRY 먼저 확인)
@@ -100,12 +101,12 @@ TQQQ_FORCE_T=29 SOXL_FORCE_T=20 TRADE_MODE=DRY uv run python trading_bot.py
 SOXL_MAX_T=19 FORCE_T_REINFERENCE=true uv run python trading_bot.py
 
 # 테스트 실행
-# 브로커 실 API 통합 테스트는 pytest 마커(kis/kiwoom/ls/toss)로 구분됩니다.
+# 브로커 실 API 통합 테스트는 pytest 마커(kis/kiwoom/ls/toss/nhplug)로 구분됩니다.
 # tests/conftest.py가 .env 자격증명만으로 실행 여부를 판단합니다 — BROKER 값과 무관하게
 # 해당 브로커 키가 설정돼 있으면 실행되고, 없으면 자동 skip됩니다.
 # 마커 없는 유닛/모의 테스트는 항상 실행됩니다.
 uv run pytest tests/ -v                          # 키 설정된 브로커 통합 테스트 + 유닛
-uv run pytest tests/ -m kis -v                   # 특정 브로커만 (kis/kiwoom/ls/toss)
+uv run pytest tests/ -m kis -v                   # 특정 브로커만 (kis/kiwoom/ls/toss/nhplug)
 uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증명 기준으로 동작
 
 # 참고: 브로커별 필수 자격증명
@@ -113,6 +114,7 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 #   kiwoom= KIWOOM_APP_KEY + KIWOOM_APP_SECRET
 #   ls    = LS_APP_KEY + LS_APP_SECRET
 #   toss  = TOSS_APP_KEY + TOSS_APP_SECRET
+#   nhplug= NHPLUG_APP_KEY + NHPLUG_APP_SECRET + NHPLUG_ACCT_NO
 # 유닛/모의 테스트(test_broker_contract, test_reverse_mode, test_state_t_updates 등)는
 # API를 호출하지 않아 자격증명 없이 항상 실행됩니다.
 ```
@@ -167,7 +169,7 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
       `STATE_ASSUME_REVERSE_EXPIRY_SYMBOL`/`_ORDER`/`_EXPECT_HASH` 필요.
   - `canonical_state_hash()` (`src/state.py`): `save_state()`가 기록하는 필드만 SHA-256 — 복구 CAS/audit용.
     네 복구 모드(`STATE_REVERSE_AUDIT_ONLY`/`RECONCILE_ONLY`/`NET_INVESTED_REPAIR_ONLY`/`ASSUME_REVERSE_EXPIRY_ONLY`)는 **동시 설정 금지**.
-- **KIWOOM/LS/TOSS**: `BROKER_CONFIG`에 `account_no` 불필요 (AppKey/Secret만으로 API 호출 가능)
+- **KIWOOM/LS/TOSS**: `BROKER_CONFIG`에 `account_no` 불필요 (AppKey/Secret만으로 API 호출 가능), **KIS/NHPLUG는 계좌번호 필수** (`KIS_ACCOUNT_NO` / `NHPLUG_ACCT_NO` 없으면 호출 금지)
 - **주문 시각**: 모든 브로커에서 `get_kst_now()` 사용 (API 응답 시간 미사용)
 - **KIS ODNO 정규화**: 주문 접수 API는 leading zero 10자리(`0000052248`), 체결 조회는 trimmed(`52248`) 반환 → `kis/adapter.py`에서 `str(int(odno))`로 정규화 후 반환 (다른 브로커는 해당 없음)
 - **KIWOOM 모의투자 주문이력(ust21150)**: 날짜별 개별 조회, 빈 결과/`501724` 에러 시 `[정보]` 로그 출력 (line 534-545)

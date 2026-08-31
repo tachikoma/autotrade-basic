@@ -131,14 +131,14 @@ TRADE_MODE=LIVE uv run python trading_bot.py
 
 ### 3. 테스트 — `pytest`
 
-브로커 실 API 통합 테스트는 pytest 마커(`kis`/`kiwoom`/`ls`/`toss`)로 구분됩니다.
+브로커 실 API 통합 테스트는 pytest 마커(`kis`/`kiwoom`/`ls`/`toss`/`nhplug`)로 구분됩니다.
 `tests/conftest.py`가 `.env`의 자격증명 유무만으로 실행 여부를 판단하므로,
 **BROKER 값과 무관하게** 해당 브로커 키가 설정돼 있으면 실행되고 없으면 자동 skip됩니다.
 마커 없는 유닛/모의 테스트는 항상 실행됩니다.
 
 ```bash
 uv run pytest tests/ -v                          # 키 설정된 브로커 통합 테스트 + 유닛
-uv run pytest tests/ -m kis -v                   # 특정 브로커만 (kis/kiwoom/ls/toss)
+uv run pytest tests/ -m kis -v                   # 특정 브로커만 (kis/kiwoom/ls/toss/nhplug)
 uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증명 기준으로 동작
 ```
 
@@ -150,6 +150,7 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 | `kiwoom` | `KIWOOM_APP_KEY` + `KIWOOM_APP_SECRET` |
 | `ls` | `LS_APP_KEY` + `LS_APP_SECRET` |
 | `toss` | `TOSS_APP_KEY` + `TOSS_APP_SECRET` |
+| `nhplug` | `NHPLUG_APP_KEY` + `NHPLUG_APP_SECRET` + `NHPLUG_ACCT_NO` |
 
 ---
 
@@ -301,20 +302,23 @@ demo/real × 브로커별로 **7개의 Environment**를 생성합니다. 각 Env
 
 각 Environment에 아래 secrets를 등록합니다. 해당 브로커에만 필요한 값만 채우면 됩니다 (나머지는 빈 값).
 
-| Secret 이름 | kis | kiwoom | ls | toss | 설명 |
-|-------------|-----|--------|----|------|------|
-| `KIS_APP_KEY` | ✅ | | | | KIS 앱 키 |
-| `KIS_APP_SECRET` | ✅ | | | | KIS 앱 시크릿 |
-| `KIS_ACCOUNT_NO` | ✅ | | | | KIS 계좌번호 |
-| `KIWOOM_APP_KEY` | | ✅ | | | 키움 앱 키 |
-| `KIWOOM_APP_SECRET` | | ✅ | | | 키움 앱 시크릿 |
-| `LS_APP_KEY` | | | ✅ | | LS 앱 키 |
-| `LS_APP_SECRET` | | | ✅ | | LS 앱 시크릿 |
-| `TOSS_APP_KEY` | | | | ✅ | 토스 앱 키 |
-| `TOSS_APP_SECRET` | | | | ✅ | 토스 앱 시크릿 |
-| `FINNHUB_API_KEY` | | | ✅ | | LS 모의투자용 Finnhub API 키 (무료, https://finnhub.io/register) |
-| `TELEGRAM_BOT_TOKEN` | ✅ | ✅ | ✅ | ✅ | 텔레그램 봇 토큰 (환경별 채널 분리 가능) |
-| `TELEGRAM_CHAT_ID` | ✅ | ✅ | ✅ | ✅ | 텔레그램 채팅 ID |
+| Secret 이름 | kis | kiwoom | ls | toss | nhplug | 설명 |
+|-------------|-----|--------|------|------|--------|------|
+| `KIS_APP_KEY` | ✅ | | | | | KIS 앱 키 |
+| `KIS_APP_SECRET` | ✅ | | | | | KIS 앱 시크릿 |
+| `KIS_ACCOUNT_NO` | ✅ | | | | | KIS 계좌번호 |
+| `KIWOOM_APP_KEY` | | ✅ | | | | 키움 앱 키 |
+| `KIWOOM_APP_SECRET` | | ✅ | | | | 키움 앱 시크릿 |
+| `LS_APP_KEY` | | | ✅ | | | LS 앱 키 |
+| `LS_APP_SECRET` | | | ✅ | | | LS 앱 시크릿 |
+| `TOSS_APP_KEY` | | | | ✅ | | 토스 앱 키 |
+| `TOSS_APP_SECRET` | | | | ✅ | | 토스 앱 시크릿 |
+| `NHPLUG_APP_KEY` | | | | | ✅ | NHPLUG 앱 키 |
+| `NHPLUG_APP_SECRET` | | | | | ✅ | NHPLUG 앱 시크릿 |
+| `NHPLUG_ACCT_NO` | | | | | ✅ | NHPLUG 계좌번호 (필수) |
+| `FINNHUB_API_KEY` | | | ✅ | | | LS 모의투자용 Finnhub API 키 (무료, https://finnhub.io/register) |
+| `TELEGRAM_BOT_TOKEN` | ✅ | ✅ | ✅ | ✅ | ✅ | 텔레그램 봇 토큰 (환경별 채널 분리 가능) |
+| `TELEGRAM_CHAT_ID` | ✅ | ✅ | ✅ | ✅ | ✅ | 텔레그램 채팅 ID |
 
 > **demo/real 분리**: 같은 브로커의 demo와 real은 서로 다른 Environment이므로, 각각 다른 계좌번호와 텔레그램 채널을 등록할 수 있습니다.
 

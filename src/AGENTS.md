@@ -7,7 +7,7 @@ KIS Open API 호출, 무한매수법 V4 전략 로직, 상태 관리 등 자동�
 | Task | File | Notes |
 |------|------|-------|
 | 전략 이해/수정 | strategy.py | `무한매수법_V4()` — 별지점, 전/후반전, 추가매수 LOC |
-| 브로커 구현 | broker/{kis,kiwoom,ls,toss}/ | 각 브로커별 API 어댑터 |
+| 브로커 구현 | broker/{kis,kiwoom,ls,toss,nhplug}/ | 각 브로커별 API 어댑터 |
 | 공통 인터페이스 | broker/base.py | `Broker`, `OrderResult`, `BrokerError`, `OrderNotAcceptedError` |
 | 일봉 종가 조회 | broker/base.py `get_daily_closes()` | TR: KIS=HHDFS76240000, LS=g3204, KIWOOM=usa06012, TOSS=GET /api/v1/candles |
 | state.json I/O | state.py | `load_state()`, `save_state()`, `update_T_from_history()` |
@@ -17,7 +17,7 @@ KIS Open API 호출, 무한매수법 V4 전략 로직, 상태 관리 등 자동�
 | 시간/시장 유틸 | broker/market_utils.py | `get_kst_now()`, `is_us_trading_day()`, `normalize_order_price()` |
 
 ## CONVENTIONS (src 전용)
-- **broker/{kis,kiwoom,ls,toss}/**: 각 브로커별 `_request_with_rate_retry()` 래퍼 — 재시도/rate-limit 처리
+- **broker/{kis,kiwoom,ls,toss,nhplug}/**: 각 브로커별 `_request_with_rate_retry()` 래퍼 — 재시도/rate-limit 처리
 - **config.py**: `_parse_symbols()`는 모듈 로드 시점에 실행되어 `SYMBOLS` 전역 상수 생성
 - **strategy.py**: 유니코드 함수 `무한매수법_V4()`만 전략 함수, 나머지는 영어 snake_case
 - **broker/adapter.py**: DRY 모드에서 주문 정보만 print, LIVE 모드에서만 실제 API POST
@@ -40,7 +40,7 @@ KIS Open API 호출, 무한매수법 V4 전략 로직, 상태 관리 등 자동�
 - `_request_with_rate_retry()` 우회 금지 — 모든 API 호출은 이 래퍼를 통해야 rate-limit 안전
 - `__pycache__/` — 절대 커밋 금지 (`.gitignore`에 있음)
 - `.state.json` — 커밋 금지 (GH Actions 캐시로만 관리)
-- `KIS_ACCOUNT_NO` 없는 상태로 KIS API 호출 금지 (KIWOOM/LS/TOSS는 계좌번호 불필요)
+- `KIS_ACCOUNT_NO` / `NHPLUG_ACCT_NO` 없는 상태로 KIS/NHPLUG API 호출 금지 (KIWOOM/LS/TOSS는 계좌번호 불필요)
 - 모의투자 미지원 주문 유형(LOC/LOO/MOC/MOO) → 자동 LIMIT 변환 (broker별 adapter)
 - `TRADE_MODE` 무단 LIVE 전환 금지 (DRY 먼저 확인)
 - `.venv` 의존성 직접 수정 금지 — 항상 `uv` 사용
