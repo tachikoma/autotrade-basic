@@ -120,6 +120,36 @@ uv run pytest tests/test_kiwoom_integration.py -v  # 특정 파일도 자격증�
 # API를 호출하지 않아 자격증명 없이 항상 실행됩니다.
 ```
 
+## PREFLIGHT (브로커 검증) — 모의 전 사전 테스트
+
+신규/변경 브로커는 모의 전략 실행 전에 문서 체크리스트 기반 preflight 검증을 1회 통과해야 합니다. 코드 차단(마커)이 아니라 문서·스크립트 기반 사전 점검입니다.
+
+**용어**: `인증` 대신 `preflight` / `브로커 검증` / `API 사전 테스트`를 사용합니다.
+
+**범위 (전략이 실제 호출하는 API만)**:
+- `get_daily_closes(symbol, exchange, days=5) → list[float]` (오래된 순) — 리버스 별지점 fallback
+- `get_balance(symbol, exchange) → Balance | None`
+- `get_purchase_amount(symbol, exchange) → PurchaseAmount` — 리버스 쿼터매수 기준
+- `get_order_history(symbol, exchange, days=30) → list[dict]` — `ord_dt/ord_tmd/odno/ft_ccld_qty` 등 표준 필드. 빈 이력과 체결 후 이력 모두에서 파싱 검증
+- `get_stock_price` / `get_stock_quotation` / `is_trading_day` — 시세/거래일
+
+**주문 사전 테스트 (단일 계좌, 이력 최소화)**:
+- 1순위: 비시장성 `BUY LIMIT 1주(현재가-5% 등)` 제출 → 당일 이력 매칭(`ord_dt/odno` 확인) → `cancel` → `ft_ccld_qty=0, remaining=0, terminal canceled` 재확인. `0체결 취소`는 T/`net_invested`에 영향 없음.
+- 대체: `cancel` 미구현 시 비정상 주문(예: `99999주/$0.01`)으로 `OrderNotAcceptedError` 거부 확인만으로 대체. 성공 접수 경로는 모의 첫 주문으로 위임.
+- 전량매도 복원(`매수 체결→다음날 매도해 잔고 0`)은 사전 필수 아님 — 모의 진입 후 보정으로 위임.
+- 데모 `LOC/MOC→LIMIT` 변환은 어댑터 로그(`요청 타입 vs 실제 전송 타입`)로만 확인. 종가 체결 차이는 실전 소액 LIVE에서 확인.
+
+**실행**:
+```bash
+uv run python tests/test_broker_preflight.py --broker kis --symbol TQQQ
+# 또는 pytest
+uv run pytest tests/test_broker_preflight.py -v
+```
+- 자격증명이 설정된 브로커만 실행, 없으면 skip. 이력 오염을 막기 위해 비시장성 가격 사용.
+- 통과 로그를 남기고 모의(`TRADE_MODE=DRY → LIVE demo`) 진입. 중간 운영 중 API 응답 변경은 `balance_mismatch`/`T 경고`/`STATE_REVERSE_AUDIT_ONLY`로 감지·보정.
+
+**실전 소액 LIVE 1세션**: 별도 테스트가 아니라 전략의 첫 실전 주문 자체를 smoke 테스트로 봅니다. `LOC/MOC` 실전 접수 여부와 파이프라인 1회 정상 동작만 확인.
+
 ## COMMUNICATION RULES
 
 - **질문과 수정 요청 구분**: 사용자가 물음표(?)로 끝내면 "질문"으로 간주한다.
