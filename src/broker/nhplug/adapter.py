@@ -373,23 +373,25 @@ class NHPlugBroker(Broker):
                 prcs_stat = "체결" if float(ft_ccld_qty) > 0 else "미체결"
             except Exception:
                 prcs_stat = ""
-        # 시간 처리: ord_dt+ord_tmd → KST iso
+        # 시간 처리: ord_dt(미국영업일)+ord_tmd(KST) → 실제 KST 복원 후 UTC 변환 (오라클 필수 조치 1)
+        # GSB10030은 ord_tmd 없이 일자만 오므로 04:10 KST를 가정, resolve 실패 시 직접 파싱 폴백
         ord_datetime_kst_iso = None
         ord_datetime_utc_iso = None
-        if ord_dt and ord_tmd:
-            try:
-                kst_dt = datetime.strptime(ord_dt + ord_tmd, "%Y%m%d%H%M%S")
-                kst_dt = kst_dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
-                ord_datetime_kst_iso = kst_dt.isoformat()
-                ord_datetime_utc_iso = kst_dt.astimezone(ZoneInfo("UTC")).isoformat()
-            except Exception:
-                pass
         resolved_kst_iso = None
-        if ord_dt and ord_tmd:
+        if ord_dt:
+            ord_tmd_for_resolve = ord_tmd if ord_tmd else "041000"
             try:
-                resolved_kst = resolve_real_kst_from_ord(ord_dt, ord_tmd)
+                resolved_kst = resolve_real_kst_from_ord(ord_dt, ord_tmd_for_resolve)
                 if resolved_kst is not None:
+                    ord_datetime_kst_iso = resolved_kst.isoformat()
+                    ord_datetime_utc_iso = resolved_kst.astimezone(ZoneInfo("UTC")).isoformat()
                     resolved_kst_iso = resolved_kst.isoformat()
+                elif ord_tmd:
+                    # resolve 실패 시 기존 직접 파싱 유지 (폴백)
+                    kst_dt = datetime.strptime(ord_dt + ord_tmd, "%Y%m%d%H%M%S")
+                    kst_dt = kst_dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+                    ord_datetime_kst_iso = kst_dt.isoformat()
+                    ord_datetime_utc_iso = kst_dt.astimezone(ZoneInfo("UTC")).isoformat()
             except Exception:
                 pass
         return {
