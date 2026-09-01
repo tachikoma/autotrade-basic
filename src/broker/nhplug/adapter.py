@@ -62,7 +62,8 @@ from broker.nhplug.order_types import (
 # XA102: 실측 확인 — 모의투자 buyableAmount(매수가능금액) 조회 시
 #   rsp_cd="XA102", rsp_msg="모의투자 조회가 완료되었습니다"가 정상 성공 응답으로
 #   반환됩니다 (HTTP 200, Output_0에 orr_pbl_amt 등 데이터 포함).
-_SUCCESS_RSP_CODES = {"00000", "00166", "00221", "13578", "XA102"}
+# 00048: 실측 확인 — 모의투자 매수주문이완료 (GH 로그 2026-08-31 00048/완료 + 잔고 3주/2주 보유 실증)
+_SUCCESS_RSP_CODES = {"00000", "00166", "00221", "13578", "XA102", "00048"}
 
 
 class NHPlugBroker(Broker):
@@ -288,11 +289,11 @@ class NHPlugBroker(Broker):
                         )
 
                     # HTTP 200 + 에러 봉투 처리 (NHPLUG 공통 에러 형식)
-                    # 1) message 봉투: msg_code가 비어있거나 "00000"이면 성공
+                    # 1) message 봉투: msg_code가 비어있거나 "00000"이거나 usr_msg에 "완료" 포함이면 성공 (공식 SDK 안전망)
                     message_block = data.get("message") or {}
                     msg_code = str(message_block.get("msg_code", "") or "")
-                    if msg_code and msg_code != "00000":
-                        usr_msg = str(message_block.get("usr_msg", "알 수 없는 오류"))
+                    usr_msg = str(message_block.get("usr_msg", "알 수 없는 오류"))
+                    if msg_code and msg_code != "00000" and "완료" not in usr_msg:
                         dvlp_msg = str(message_block.get("dvlp_msg", ""))
                         if self._is_rate_limit_error(msg_code, usr_msg):
                             print(f"⏳ NHPLUG rate-limit 감지 ({msg_code}), 재시도...")
@@ -303,11 +304,11 @@ class NHPlugBroker(Broker):
                             f"NHPLUG API 오류 [{msg_code}]: {usr_msg}{detail}"
                         )
 
-                    # 2) rsp_cd/rsp_msg 봉투: 성공 코드(00000/00166/00221/13578)가
-                    #    아니면 실패 (예: "14580" 모의투자 장종료)
+                    # 2) rsp_cd/rsp_msg 봉투: 성공 코드(00000/00166/00221/13578/XA102/00048)가
+                    #    아니면 실패 (예: "14580" 모의투자 장종료) — 단 rsp_msg에 "완료" 포함이면 성공 (공식 SDK 안전망)
                     rsp_cd = str(data.get("rsp_cd", "") or "")
-                    if rsp_cd and rsp_cd not in _SUCCESS_RSP_CODES:
-                        rsp_msg = str(data.get("rsp_msg", "알 수 없는 오류"))
+                    rsp_msg = str(data.get("rsp_msg", "알 수 없는 오류"))
+                    if rsp_cd and rsp_cd not in _SUCCESS_RSP_CODES and "완료" not in rsp_msg:
                         if self._is_rate_limit_error(rsp_cd, rsp_msg):
                             print(f"⏳ NHPLUG rate-limit 감지 ({rsp_cd}), 재시도...")
                             time.sleep(self._rate_limit_wait)

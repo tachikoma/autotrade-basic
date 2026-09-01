@@ -29,6 +29,7 @@ KIS Open API 호출, 무한매수법 V4 전략 로직, 상태 관리 등 자동�
 | KIWOOM | `return_code == 0` | `return_code` | `return_msg` | `_check_response()` |
 | LS | `rsp_cd == "00000"` | `rsp_cd` | `rsp_msg` | 각 메서드 |
 | TOSS | `error` 없음 | `error.code` | `error.message` | `_request_with_rate_retry()` |
+| NHPLUG | `rsp_cd in {"00000","00166","00221","13578","XA102","00048"} or "완료" in rsp_msg/usr_msg` | `rsp_cd`/`msg_code` | `rsp_msg`/`usr_msg` | `_request_with_rate_retry()` |
 
 **참고**: 주문 시각은 모든 브로커에서 `get_kst_now()` 사용 (API 응답 시간 미사용)
 - **`OrderNotAcceptedError`** (`broker/base.py`): 주문이 **확정적으로 미접수**됨이 보장되는 경우만 사용 — 사전검증 실패, 브로커 거부 응답(`rt_cd`/`return_code`/`rsp_cd`/`error` envelope). 네트워크 타임아웃/연결 오류 등 접수 여부가 불확실하면 기존 `OrderError` 유지. trading_bot.py는 미접수 확정 시 fence 해제 후 다음 종목 진행, 불확실 시 fence 유지 + 종목별 복구(`_recover_order_fence`, 다음 RUN에서 이전 세션 이력 정착 시 자동 해제)

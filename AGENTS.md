@@ -49,6 +49,7 @@ autotrade-basic/
 | KIWOOM | `return_code == 0` | `return_code` | `return_msg` | `_check_response()` |
 | LS | `rsp_cd == "00000"` | `rsp_cd` | `rsp_msg` | 각 메서드 |
 | TOSS | `error` 없음 | `error.code` | `error.message` | `_request_with_rate_retry()` |
+| NHPLUG | `rsp_cd in {"00000","00166","00221","13578","XA102","00048"} or "완료" in rsp_msg/usr_msg` | `rsp_cd`/`msg_code` | `rsp_msg`/`usr_msg` | `_request_with_rate_retry()` |
 
 **참고**: 주문 시각은 모든 브로커에서 `get_kst_now()` 로컬 시간 사용 (API 응답 시간 미사용)
 
