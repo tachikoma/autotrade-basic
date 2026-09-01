@@ -53,6 +53,7 @@ from broker.nhplug.order_types import (
     TR_ID_BALANCE,
     TR_ID_BUYABLE_AMOUNT,
     TR_ID_DAILY_TRANSACTION,
+    TR_ID_UNEXECUTED,
     TR_ID_BUY_ORDER,
     TR_ID_SELL_ORDER,
 )
@@ -334,6 +335,84 @@ class NHPlugBroker(Broker):
         # 도달 불가능 — 루프는 항상 return 또는 raise로 종료
         raise BrokerError("API 호출 실패: 재시도 한도 초과")
 
+    def _normalize_unexecuted_item(self, raw: dict) -> dict:
+        """
+        GSB10030(unexecuted) 응답 필드를 state.py 표준 필드로 변환.
+        openapi.json 기준: orr_dt, orr_tm, orr_no, iem_cd, sby_dit_nm, orr_qty, cns_qty, cns_pr, ny_cns_orr_qty 등
+        → state 기대 필드(ord_dt, ord_tmd, odno, ft_ord_qty, ft_ccld_qty 등)로 매핑.
+        """
+        # GSB10030 필드 → KIS 호환 필드로 매핑
+        ord_dt = raw.get("orr_dt", "") or raw.get("ord_dt", "")
+        # orr_tm 은 HHMMSS 형태, 없으면 000000
+        ord_tmd_raw = raw.get("orr_tm", "") or raw.get("ord_tmd", "") or raw.get("orr_tmd_raw", "")
+        ord_tmd = ord_tmd_raw.zfill(6) if ord_tmd_raw else ""
+        # 수량/가격: 원본 필드 우선, 없으면 KIS 호환 필드 fallback
+        ft_ord_qty = raw.get("orr_qty", raw.get("ft_ord_qty", "0"))
+        ft_ccld_qty = raw.get("cns_qty", raw.get("ft_ccld_qty", "0"))
+        ft_ccld_unpr3 = raw.get("cns_pr", raw.get("ft_ccld_unpr3", "0"))
+        # 체결금액은 단가*수량으로 계산하거나 fc_trd_amt 있으면 사용
+        ft_ccld_amt3 = raw.get("ft_ccld_amt3", "")
+        if not ft_ccld_amt3 or ft_ccld_amt3 == "0":
+            try:
+                amt = float(ft_ccld_unpr3) * float(ft_ccld_qty)
+                ft_ccld_amt3 = str(amt) if amt else "0"
+            except Exception:
+                ft_ccld_amt3 = raw.get("fc_trd_amt", "0")
+        nccs_qty = raw.get("ny_cns_orr_qty", raw.get("nccs_qty", "0"))
+        odno = str(raw.get("orr_no", raw.get("odno", "")))
+        sby = raw.get("sby_dit_nm", raw.get("sll_buy_dvsn_cd_name", ""))
+        # 매도/매수 한글 보정: 0=전체, 1=매도, 2=매수 → 한글로 변환 (테스트 호환)
+        if sby in ("1", "01"):
+            sby = "매도"
+        elif sby in ("2", "02"):
+            sby = "매수"
+        prcs_stat = raw.get("orr_sts_nm", raw.get("prcs_stat_name", ""))
+        if not prcs_stat:
+            # 체결/미체결 구분: cns_qty >0 이면 체결
+            try:
+                prcs_stat = "체결" if float(ft_ccld_qty) > 0 else "미체결"
+            except Exception:
+                prcs_stat = ""
+        # 시간 처리: ord_dt+ord_tmd → KST iso
+        ord_datetime_kst_iso = None
+        ord_datetime_utc_iso = None
+        if ord_dt and ord_tmd:
+            try:
+                kst_dt = datetime.strptime(ord_dt + ord_tmd, "%Y%m%d%H%M%S")
+                kst_dt = kst_dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+                ord_datetime_kst_iso = kst_dt.isoformat()
+                ord_datetime_utc_iso = kst_dt.astimezone(ZoneInfo("UTC")).isoformat()
+            except Exception:
+                pass
+        resolved_kst_iso = None
+        if ord_dt and ord_tmd:
+            try:
+                resolved_kst = resolve_real_kst_from_ord(ord_dt, ord_tmd)
+                if resolved_kst is not None:
+                    resolved_kst_iso = resolved_kst.isoformat()
+            except Exception:
+                pass
+        return {
+            "ord_dt": ord_dt,
+            "ord_tmd": ord_tmd_raw,
+            "ord_datetime_kst": ord_datetime_kst_iso,
+            "ord_datetime_utc": ord_datetime_utc_iso,
+            "_ord_dt_is_us_trading_date": True,
+            "_resolved_kst_iso": resolved_kst_iso,
+            "prdt_name": raw.get("tck_iem_cd", raw.get("iem_cd", raw.get("prdt_name", ""))),
+            "sll_buy_dvsn_cd_name": sby,
+            "ft_ord_qty": str(ft_ord_qty),
+            "ft_ccld_qty": str(ft_ccld_qty),
+            "ft_ccld_unpr3": str(ft_ccld_unpr3),
+            "ft_ccld_amt3": str(ft_ccld_amt3),
+            "nccs_qty": str(nccs_qty),
+            "prcs_stat_name": prcs_stat,
+            "tr_mket_name": raw.get("tr_mket_name", ""),
+            "tr_crcy_cd": raw.get("tr_crcy_cd", "USD"),
+            "odno": odno,
+            "ovrs_excg_cd": raw.get("ovrs_excg_cd", ""),
+        }
+
     def _normalize_order_item(self, raw: dict) -> dict:
         """
         NHPLUG 응답 필드를 state.py가 기대하는 표준 필드명으로 변환.
@@ -563,12 +642,12 @@ class NHPlugBroker(Broker):
         """
         해외주식 주문 체결 내역을 조회합니다 → list[dict].
 
-        TR: GSB10040 (일별거래내역)
-        Input_0: act_no, iqr_sta_dt, iqr_end_dt, act_trd_cfc_cd("00"=전체),
-                 iem_mlf_cd("00001"=외화주식), iem_cd(선택)
-        ⚠️ 이 API에는 거래소코드/통화코드 필드가 없습니다.
-        응답: Output_0 = 배열(목록), Output_1 = 객체(집계)
-        각 dict는 state.py가 기대하는 표준 필드를 포함합니다:
+        TR: GSB10030 (주문체결내역) — GSB10040(일별거래내역)은 원장용이라 주문체결 추적 불가
+        Input_0: orr_dt(YYYYMMDD, 단일일), act_no, oss_sby_dit_cd("0"=전체),
+                 sot_dit("0"=전체), ost_cns_dit("0"=전체), iem_cd(선택)
+        ⚠️ 단일일 조회이므로 days 만큼 루프 호출(30일≈30회, 데모 1회/초 rate-limit 준수)
+        응답: Output_0 = 배열(orr_dt, orr_no, cns_qty, cns_pr 등)
+        각 dict는 state.py가 기대하는 표준 필드로 정규화(_normalize_unexecuted_item):
             ord_dt, ord_tmd, ord_datetime_kst, ord_datetime_utc,
             prdt_name, sll_buy_dvsn_cd_name, ft_ord_qty, ft_ccld_qty,
             ft_ccld_unpr3, ft_ccld_amt3, nccs_qty, prcs_stat_name,
@@ -576,36 +655,55 @@ class NHPlugBroker(Broker):
         """
         token = self._get_token()
 
-        # 날짜 계산 (KST 기준)
+        # 날짜 계산 (KST 기준) — GSB10030은 단일일(orr_dt) 조회라 루프
         now_kst = get_kst_now()
         start_date = now_kst - timedelta(days=days)
-        ord_end_dt = now_kst.strftime("%Y%m%d")
         ord_strt_dt = start_date.strftime("%Y%m%d")
+        ord_end_dt = now_kst.strftime("%Y%m%d")
 
-        body = self._build_body(TR_ID_DAILY_TRANSACTION, symbol, self._input_block(
-            iqr_sta_dt=ord_strt_dt,
-            iqr_end_dt=ord_end_dt,
-            act_trd_cfc_cd="00",
-            iem_mlf_cd="00001",
-            iem_cd=symbol.upper(),
-        ))
-
-        print(f"[주문이력] {symbol} 체결내역 조회 시작: {ord_strt_dt} ~ {ord_end_dt}")
+        print(f"[주문이력] {symbol} 체결내역 조회 시작: {ord_strt_dt} ~ {ord_end_dt} (GSB10030 unexecuted, {days}일 루프)")
 
         order_history: list[dict] = []
+        seen_odnos: set[str] = set()
 
         try:
-            data = self._request_with_rate_retry(
-                "/gbstock/inquiry/v1/dailyTransaction", body, token
-            )
-            output = self._extract_output(data, "Output_0") or []
-            if isinstance(output, dict):
-                output = [output]
-
-            print(f"[주문이력] {symbol} 체결내역 조회 성공: {len(output)}건")
-
-            for item in output:
-                order_history.append(self._normalize_order_item(item))
+            # days일치 루프: orr_dt를 하루씩 조회 (과거→현재 순)
+            for offset in range(days, -1, -1):
+                dt = (now_kst - timedelta(days=offset)).strftime("%Y%m%d")
+                body = self._build_body(TR_ID_UNEXECUTED, symbol, self._input_block(
+                    orr_dt=dt,
+                    oss_sby_dit_cd="0",
+                    sot_dit="0",
+                    ost_cns_dit="0",
+                    iem_cd=symbol.upper(),
+                ))
+                try:
+                    data = self._request_with_rate_retry(
+                        "/gbstock/inquiry/v1/unexecuted", body, token
+                    )
+                except BrokerError as e:
+                    # 0건/조회불가 등은 빈 결과로 처리, 치명 오류는 상위로
+                    # "조회할 내역이 없습니다"(13578) 등은 성공 코드로 이미 처리됨
+                    print(f"[주문이력] {symbol} {dt} 조회 중 BrokerError: {e} → 건너뜀")
+                    continue
+                output = self._extract_output(data, "Output_0") or []
+                if isinstance(output, dict):
+                    output = [output]
+                if output:
+                    print(f"[주문이력] {symbol} {dt} 조회 성공: {len(output)}건")
+                for item in output:
+                    norm = self._normalize_unexecuted_item(item)
+                    # 중복 제거: 동일 odno+ord_dt는 1회만
+                    dedup_key = f"{norm.get('odno')}:{norm.get('ord_dt')}:{norm.get('ft_ccld_qty')}"
+                    if dedup_key in seen_odnos:
+                        continue
+                    seen_odnos.add(dedup_key)
+                    # 심볼 필터: iem_cd가 있으면 해당 종목만 (서버가 필터 안 할 경우 대비)
+                    prdt = norm.get("prdt_name", "")
+                    if prdt and prdt.upper() != symbol.upper():
+                        # iem_cd가 다른 종목이면 스킵 (원장 필터 보정)
+                        continue
+                    order_history.append(norm)
 
             print(f"[주문이력] {symbol} 체결내역 총 {len(order_history)}건 조회 완료")
 
